@@ -25,11 +25,11 @@ private:
   void InitPublishers();
   void InitSubscribers();
   void InitServers();
-  void make_beep();
-  void make_silence();
-  void set_volume(int percent,bool notify=false);
-  void capture_loop();
-  void playback_loop();
+  void MakeBeep();
+  void MakeSilence();
+  void SetVolume(int percent,bool notify=false);
+  void CaptureLoop();
+  void PlaybackLoop();
   AudioIoConfig audio_io_config_;
   xc::LogManager log_manager_;
   std::string capture_device_,playback_device_,beep_,silence_,wake_ack_path_;

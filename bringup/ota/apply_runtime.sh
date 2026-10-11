@@ -22,7 +22,7 @@ stopped=0
 replaced=0
 committed=0
 
-rollback() {
+Rollback() {
   status=$?
   trap - EXIT
   set +e
@@ -44,7 +44,7 @@ rollback() {
   if [[ "$committed" -eq 0 ]]; then rm -f "$archive"; fi
   exit "$status"
 }
-trap rollback EXIT
+trap Rollback EXIT
 
 [[ "$(id -u)" -eq 0 ]] || { echo 'ADB shell must be root.' >&2; exit 1; }
 if [[ -d "$workspace" && -d "$legacy_workspace" ]]; then

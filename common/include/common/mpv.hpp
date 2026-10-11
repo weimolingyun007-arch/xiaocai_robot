@@ -10,14 +10,14 @@
 #include <unistd.h>
 
 namespace xiaocai_robot::common {
-inline std::string music_socket() {
+inline std::string MusicSocket() {
   const char *home = std::getenv("HOME");
   return std::string(home ? home : "/home/lckfb") + "/.config/ncm-cli/mpv.sock";
 }
 
 // Each connection has its own request id. Ignore asynchronous mpv events.
-inline nlohmann::json mpv_command(const nlohmann::json &command,
-                                 const std::string &path = music_socket()) {
+inline nlohmann::json MpvCommand(const nlohmann::json &command,
+                                 const std::string &path = MusicSocket()) {
   const int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (fd < 0) return {};
   struct Close { int fd; ~Close() { close(fd); } } closer{fd};
@@ -49,7 +49,7 @@ inline nlohmann::json mpv_command(const nlohmann::json &command,
   return {};
 }
 
-inline bool mpv_ok(const nlohmann::json &response) {
+inline bool MpvOk(const nlohmann::json &response) {
   return response.is_object() && response.value("error", std::string{}) == "success";
 }
 }

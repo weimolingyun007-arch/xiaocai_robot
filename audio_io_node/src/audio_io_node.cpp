@@ -16,8 +16,8 @@
 
 AudioIoNode::AudioIoNode()
     : Node("audio_io_node"), audio_io_config_(),
-      log_manager_("audio_io_node", audio_io_config_.logging()) {
-    const auto &settings = audio_io_config_.settings();
+      log_manager_("audio_io_node", audio_io_config_.Logging()) {
+    const auto &settings = audio_io_config_.Settings();
     capture_device_ = declare_parameter<std::string>("capture_device", settings.capture_device);
     playback_device_ = declare_parameter<std::string>("playback_device", settings.playback_device);
     wake_ack_path_ = declare_parameter<std::string>("wake_ack_path", settings.wake_ack_path);
@@ -27,17 +27,17 @@ AudioIoNode::AudioIoNode()
     InitPublishers();
     InitSubscribers();
     InitServers();
-    xc::run({"amixer", "-c", "0", "set", "Playback Path", "SPK"});
-    xc::run({"amixer", "-c", "0", "set", "Capture MIC Path", "Main Mic"});
-    make_silence();
+    xc::Run({"amixer", "-c", "0", "set", "Playback Path", "SPK"});
+    xc::Run({"amixer", "-c", "0", "set", "Capture MIC Path", "Main Mic"});
+    MakeSilence();
     // Create the shared ALSA software-gain control with an inaudible zero PCM.
-    xc::run({"aplay", "-q", "-D", playback_device_, silence_});
-    set_volume(volume_percent_);
-    xc::run({"amixer", "-c", "0", "set", "ADC PGA Gain", std::to_string(adc_pga_gain)});
-    xc::run({"amixer", "-c", "0", "set", "MIC Boost Gain", std::to_string(mic_boost_gain)});
-    make_beep();
-    capture_ = std::thread([this] { capture_loop(); });
-    playback_ = std::thread([this] { playback_loop(); });
+    xc::Run({"aplay", "-q", "-D", playback_device_, silence_});
+    SetVolume(volume_percent_);
+    xc::Run({"amixer", "-c", "0", "set", "ADC PGA Gain", std::to_string(adc_pga_gain)});
+    xc::Run({"amixer", "-c", "0", "set", "MIC Boost Gain", std::to_string(mic_boost_gain)});
+    MakeBeep();
+    capture_ = std::thread([this] { CaptureLoop(); });
+    playback_ = std::thread([this] { PlaybackLoop(); });
   }
 
 void AudioIoNode::InitPublishers() {
@@ -50,7 +50,7 @@ void AudioIoNode::InitSubscribers() {
     play_sub_ = create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10,
       [this](xiaocai_msgs::msg::AudioPlay::SharedPtr m) {
         if (m->path == "__stop__") {
-          xiaocai_robot::common::mpv_command({"stop"});
+          xiaocai_robot::common::MpvCommand({"stop"});
           silenced_.store(true);
           {
             std::lock_guard<std::mutex> lock(mu_);
@@ -72,9 +72,9 @@ void AudioIoNode::InitSubscribers() {
     volume_command_sub_ = create_subscription<xiaocai_msgs::msg::VolumeCommand>("/xiaocai_robot/audio/volume/command", 10,
       [this](xiaocai_msgs::msg::VolumeCommand::SharedPtr m) {
         const auto action = static_cast<xiaocai_robot::common::VolumeAction>(m->action);
-        if(action==xiaocai_robot::common::VolumeAction::Up) set_volume(volume_percent_+10,true);
-        else if(action==xiaocai_robot::common::VolumeAction::Down) set_volume(volume_percent_-10,true);
-        else if(action==xiaocai_robot::common::VolumeAction::Set) set_volume(m->percent,true);
+        if(action==xiaocai_robot::common::VolumeAction::Up) SetVolume(volume_percent_+10,true);
+        else if(action==xiaocai_robot::common::VolumeAction::Down) SetVolume(volume_percent_-10,true);
+        else if(action==xiaocai_robot::common::VolumeAction::Set) SetVolume(m->percent,true);
       });
   }
 
@@ -86,21 +86,21 @@ void AudioIoNode::InitServers() {
       });
   }
 
-void AudioIoNode::set_volume(int percent,bool notify) {
+void AudioIoNode::SetVolume(int percent,bool notify) {
     percent=std::clamp(percent,0,150);
     // The RK809 driver rejects writes above 252 even though its mixer advertises 255.
     int dac=percent==0?0:std::min(252,200+(percent*52+50)/100);
-    int status=xc::run({"amixer","-c","0","cset","numid=15",std::to_string(dac)+","+std::to_string(dac)});
-    if(status) {log_manager_.logger()->error("Cannot set playback volume: {}",status);return;}
+    int status=xc::Run({"amixer","-c","0","cset","numid=15",std::to_string(dac)+","+std::to_string(dac)});
+    if(status) {LOG_ERROR("Cannot set playback volume: {}",status);return;}
     // 100% sets the hardware DAC to full scale. Above it, add up to +6 dB in
     // the shared PCM so voice prompts and mpv music are raised together.
     const double boost_db=std::max(0,percent-100)*0.12;
     const int software_volume=static_cast<int>(std::lround((60.0+boost_db)/66.0*255.0));
-    status=xc::run({"amixer","-c","0","cset","name='Xiaocai Output Gain'",
+    status=xc::Run({"amixer","-c","0","cset","name='Xiaocai Output Gain'",
       std::to_string(software_volume)+","+std::to_string(software_volume)});
-    if(status) {log_manager_.logger()->error("Cannot set software output gain: {}",status);return;}
+    if(status) {LOG_ERROR("Cannot set software output gain: {}",status);return;}
     volume_percent_=percent;
-    log_manager_.logger()->info("Playback volume: {}% (DAC {})",percent,dac);
+    LOG_INFO("Playback volume: {}% (DAC {})",percent,dac);
     if(notify){std_msgs::msg::Int32 state;state.data=percent;volume_state_->publish(state);}
 }
 
@@ -112,7 +112,7 @@ AudioIoNode::~AudioIoNode() {
     if (playback_.joinable()) playback_.join();
   }
 
-void AudioIoNode::make_beep() {
+void AudioIoNode::MakeBeep() {
     beep_ = "/tmp/xiaocai_beep.wav";
     std::ofstream out(beep_, std::ios::binary);
     const int n = 1440; const int size = n * 2;
@@ -123,7 +123,7 @@ void AudioIoNode::make_beep() {
     for(int i=0;i<n;++i){ short sample=static_cast<short>(2500*std::sin(2*M_PI*750*i/16000)); out.write((char*)&sample,2); }
   }
 
-void AudioIoNode::make_silence() {
+void AudioIoNode::MakeSilence() {
     silence_="/tmp/xiaocai_silence.wav";
     std::ofstream out(silence_,std::ios::binary);
     unsigned samples=160,bytes=samples*2;
@@ -136,7 +136,7 @@ void AudioIoNode::make_silence() {
     const std::array<char,320> zeros{};out.write(zeros.data(),zeros.size());
   }
 
-void AudioIoNode::capture_loop() {
+void AudioIoNode::CaptureLoop() {
     while (!stop_) {
       int fds[2];
       if(pipe(fds)!=0){std::this_thread::sleep_for(std::chrono::seconds(1));continue;}
@@ -169,17 +169,17 @@ void AudioIoNode::capture_loop() {
     }
   }
 
-void AudioIoNode::playback_loop() {
+void AudioIoNode::PlaybackLoop() {
     while (!stop_) {
       std::string path;
       {std::unique_lock<std::mutex> lock(mu_); cv_.wait(lock,[this]{return stop_||!queue_.empty();});
        if(stop_) break; path=queue_.front(); queue_.pop_front();}
       if (silenced_.load()) continue;
       if(path=="__beep__") path=beep_;
-      if(access(path.c_str(),R_OK)!=0) {log_manager_.logger()->error("Missing audio file: {}",path); continue;}
+      if(access(path.c_str(),R_OK)!=0) {LOG_ERROR("Missing audio file: {}",path); continue;}
       std_msgs::msg::Bool state; state.data=true; playing_->publish(state);
       // Pause music synchronously before the wake response or spoken reply.
-      xiaocai_robot::common::mpv_command({"set_property", "pause", true});
+      xiaocai_robot::common::MpvCommand({"set_property", "pause", true});
       std::this_thread::sleep_for(std::chrono::milliseconds(80));
       int status=0;
       if (!silenced_.load()) {
@@ -199,7 +199,7 @@ void AudioIoNode::playback_loop() {
           status=WIFEXITED(child_status)?WEXITSTATUS(child_status):-1;
         }
       }
-      if(status&&!silenced_.load()) log_manager_.logger()->error("aplay failed: {}",status);
+      if(status&&!silenced_.load()) LOG_ERROR("aplay failed: {}",status);
       if(path.find("/tmp/xiaocai_tts/")==0) unlink(path.c_str());
       std::this_thread::sleep_for(std::chrono::milliseconds(250));
       state.data=false; playing_->publish(state);

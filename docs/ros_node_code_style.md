@@ -74,9 +74,10 @@
 
 ## 命名与格式
 
-- 目录、文件名、普通函数、普通方法和局部变量使用 `snake_case`。
+- 目录、文件名、变量使用 `snake_case`。
+- 项目自有函数和类成员方法统一使用 `PascalCase`（大驼峰），例如 `OnText()`、`InitPublishers()`、`Classify()`；函数声明、定义和所有调用点保持一致。`main` 等语言入口、外部接口要求固定名称的回调/重写方法，以及第三方库 API 保持其规定名称。
 - ROS 节点类名使用 `PascalCase` 并以 `Node` 结尾，例如 `MusicNode`、`SpeechInputNode`、`IntentNode`；业务辅助类和结构体使用体现职责的 `PascalCase`，例如 `IntentRules`、`IntentResult`。
-- ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`；其他方法使用 `snake_case`。
+- ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`；回调方法采用 `On...` 前缀，例如 `OnText()`、`OnIntent()`。
 - 类成员变量使用 `snake_case` 并以下划线结尾，例如 `intent_rules_`、`intent_publisher_`。
 - 常量使用 `k` 前缀和描述性名称，例如 `kMaxRetryCount`；私有实现细节和文件内常量放在 `.cpp` 的匿名命名空间中。
 - 使用两个空格缩进，左花括号与函数或控制语句同行。简单提前返回可以单行书写；多步操作或多分支逻辑使用多行和花括号。
@@ -89,7 +90,7 @@
 - 每个节点包将本节点配置放在 `<node_package>/config/biz_config.toml`，并通过 `CMakeLists.txt` 安装到包的 `share/<node_package>/config/` 目录。
 - 使用 `toml++` 解析 TOML。配置类在节点源码中单独定义，例如 `IntentConfig`；配置类负责定位本节点安装后的 `biz_config.toml`，不在 ROS 节点构造函数或回调中直接解析 TOML。
 - 公共配置读取由 `xc::NodeConfigBase`（位于 `common` 公共代码中）负责。节点配置类继承该基类并传入配置文件路径；基类统一读取 `[logging]`，子类只读取本节点专属配置，不能重复实现日志配置解析。
-- 节点通过成员对象持有自己的配置类，并将基类解析好的 `logging()` 配置传给 `xc::LogManager`。ROS 节点类本身不继承配置基类。
+- 节点通过成员对象持有自己的配置类，并将基类解析好的 `Logging()` 配置传给 `xc::LogManager`。ROS 节点类本身不继承配置基类。
 - 配置字段要有明确类型、默认值和取值范围。文件缺失、解析失败或字段值无效时，按代码中的默认值处理，并输出足以定位配置文件和错误原因的信息。
 
 标准日志配置使用 `[logging]` 表：
@@ -117,7 +118,7 @@ retention_days = 7
 
 ## 日志管理约定
 
-- 节点统一使用 `xc::LogManager` 创建 spdlog logger；节点只通过 `log_manager_.logger()` 打印日志，不各自创建或配置 spdlog logger。
+- 节点统一使用 `xc::LogManager` 创建 spdlog logger；节点方法通过 `LOG_INFO(...)`、`LOG_WARN(...)`、`LOG_ERROR(...)` 宏打印日志。宏由 `common/log_manager.hpp` 提供，并转发到当前节点的 `log_manager_` 成员；不要在节点代码中直接调用 `log_manager_.Logger()->...`，也不要各自创建或配置 spdlog logger。
 - 文件直接放在 `directory` 指定的节点日志根目录，不再为日期创建子目录。文件名使用本地时间：`<node_name>_YYYYMMDD_HHMMSS.log`；按大小轮转后使用 `<node_name>_YYYYMMDD_HHMMSS.1.log`、`<node_name>_YYYYMMDD_HHMMSS.2.log` 等后缀。
 - 同一自然日内重启节点时，继续使用该日期最新的日志文件组；跨日后创建新的时间戳文件组。
 - 默认每个文件不超过 20 MB，每天最多 3 个文件（当前文件加轮转文件），保留最近 7 天。修改这些限制时，以 `biz_config.toml` 中的有效配置为准。

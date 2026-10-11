@@ -5,7 +5,7 @@
 
 namespace {
 
-std::filesystem::path default_config_path() {
+std::filesystem::path DefaultConfigPath() {
   if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
     return std::filesystem::path(root) / "tts_node" / "biz_config.toml";
   }
@@ -18,8 +18,8 @@ std::filesystem::path default_config_path() {
 
 TtsConfig::TtsConfig()
     : xc::NodeConfigBase(
-          default_config_path()) {
-  const auto *section = document()["tts"].as_table();
+          DefaultConfigPath()) {
+  const auto *section = Document()["tts"].as_table();
   if (!section) return;
   if (auto value = (*section)["model_dir"].value<std::string>()) settings_.model_dir = *value;
   if (auto value = (*section)["speaker_id"].value<std::int64_t>()) settings_.speaker_id = *value;

@@ -15,11 +15,11 @@ public:
   explicit NodeConfigBase(std::filesystem::path config_path);
   virtual ~NodeConfigBase() = default;
 
-  const LogManagerConfig &logging() const noexcept { return logging_; }
-  const std::filesystem::path &config_path() const noexcept { return config_path_; }
+  const LogManagerConfig &Logging() const noexcept { return logging_; }
+  const std::filesystem::path &ConfigPath() const noexcept { return config_path_; }
 
 protected:
-  const toml::table &document() const noexcept { return document_; }
+  const toml::table &Document() const noexcept { return document_; }
 
 private:
   void Load();

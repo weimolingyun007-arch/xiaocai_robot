@@ -13,7 +13,7 @@ struct TtsSettings {
 class TtsConfig : public xc::NodeConfigBase {
 public:
   TtsConfig();
-  const TtsSettings &settings() const noexcept { return settings_; }
+  const TtsSettings &Settings() const noexcept { return settings_; }
 
 private:
   TtsSettings settings_;

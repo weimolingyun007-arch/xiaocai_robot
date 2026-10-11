@@ -12,24 +12,24 @@ using MusicState=xiaocai_robot::common::MusicState;
 using namespace std::chrono_literals;
 
 namespace {
-json failure(const std::string &error){return {{"ok",false},{"error",error}};}
-size_t append_response(char *ptr,size_t size,size_t count,void *data) {
+json Failure(const std::string &error){return {{"ok",false},{"error",error}};}
+size_t AppendResponse(char *ptr,size_t size,size_t count,void *data) {
   auto &out=*static_cast<std::string*>(data);
   if(out.size()+size*count>1024*1024)return 0;
   out.append(ptr,size*count);return size*count;
 }
 struct Transfer {std::function<bool()> cancelled;};
-int abort_transfer(void *data,curl_off_t,curl_off_t,curl_off_t,curl_off_t) {
+int AbortTransfer(void *data,curl_off_t,curl_off_t,curl_off_t,curl_off_t) {
   return static_cast<Transfer*>(data)->cancelled()?1:0;
 }
-void keys(const json &args,std::initializer_list<const char*> allowed) {
+void ValidateKeys(const json &args,std::initializer_list<const char*> allowed) {
   if(!args.is_object())throw std::runtime_error("arguments must be an object");
   for(auto it=args.begin();it!=args.end();++it) {
     bool found=false;for(auto key:allowed)if(it.key()==key)found=true;
     if(!found)throw std::runtime_error("unexpected argument: "+it.key());
   }
 }
-std::string text_arg(const json &args,const char *key,bool required=true) {
+std::string TextArg(const json &args,const char *key,bool required=true) {
   if(!args.contains(key)){if(!required)return {};throw std::runtime_error(std::string("missing ")+key);}
   if(!args[key].is_string())throw std::runtime_error(std::string(key)+" must be a string");
   auto value=args[key].get<std::string>();
@@ -37,7 +37,7 @@ std::string text_arg(const json &args,const char *key,bool required=true) {
     throw std::runtime_error(std::string(key)+" is empty or too long");
   return value;
 }
-int int_arg(const json &args,const char *key,int low,int high) {
+int IntArg(const json &args,const char *key,int low,int high) {
   if(!args.contains(key)||!args[key].is_number_integer())throw std::runtime_error(std::string(key)+" must be an integer");
   // Compare before narrowing so very large unsigned JSON numbers cannot wrap.
   const auto value=args[key].get<double>();
@@ -46,7 +46,7 @@ int int_arg(const json &args,const char *key,int low,int high) {
 }
 }
 
-json DialogueNode::tool_definitions() {
+json DialogueNode::ToolDefinitions() {
   json tools=json::array();
   auto add=[&](const char *name,const char *description,json properties=json::object(),json required=json::array()) {
     tools.push_back({{"type","function"},{"function",{{"name",name},{"description",description},
@@ -70,18 +70,18 @@ json DialogueNode::tool_definitions() {
   return tools;
 }
 
-bool DialogueNode::cancelled(std::uint64_t generation) const {
+bool DialogueNode::Cancelled(std::uint64_t generation) const {
   return stopping_||!rclcpp::ok()||generation_.load()!=generation;
 }
 
-void DialogueNode::enqueue_chat(const std::string &text) {
+void DialogueNode::EnqueueChat(const std::string &text) {
   std::lock_guard<std::mutex> lock(tool_mutex_);
   // New accepted requests supersede any old cloud response. Standby alone does not.
   const auto generation=++generation_;
   jobs_.clear();jobs_.push_back({text,generation});tool_cv_.notify_all();
 }
 
-void DialogueNode::chat_worker() {
+void DialogueNode::ChatWorker() {
   while(!stopping_&&rclcpp::ok()) {
     ChatJob job;
     {
@@ -91,23 +91,23 @@ void DialogueNode::chat_worker() {
       if(jobs_.empty())continue;
       job=jobs_.front();jobs_.pop_front();
     }
-    if(cancelled(job.generation))continue;
+  if(Cancelled(job.generation))continue;
     try {
-      auto memory=memory_tool(MemoryOperation::ListFacts,{},0,job.generation);
+      auto memory=MemoryTool(MemoryOperation::ListFacts,{},0,job.generation);
       std::string facts;
       if(memory.value("ok",false))for(const auto &fact:memory["facts"]) {
         if(!facts.empty())facts+="；";facts+=fact.get<std::string>();
       }
-      if(!cancelled(job.generation))chat(job.text,facts,job.generation);
+      if(!Cancelled(job.generation))Chat(job.text,facts,job.generation);
     } catch(const std::exception &e) {
-      log_manager_.logger()->warn("Tool conversation failed: {}",e.what());
-      if(!cancelled(job.generation))speak("这次处理没完成，请再叫我试一次。");
+      LOG_WARN("Tool conversation failed: {}",e.what());
+      if(!Cancelled(job.generation))Speak("这次处理没完成，请再叫我试一次。");
     }
   }
 }
 
-json DialogueNode::memory_tool(MemoryOperation operation,const std::string &content,int delay,std::uint64_t generation) {
-  if(cancelled(generation))return failure("cancelled");
+json DialogueNode::MemoryTool(MemoryOperation operation,const std::string &content,int delay,std::uint64_t generation) {
+  if(Cancelled(generation))return Failure("cancelled");
   const auto id="tool-"+std::to_string(++tool_id_);
   std::unique_lock<std::mutex> lock(tool_mutex_);
   tool_results_[id]=nullptr;
@@ -116,18 +116,18 @@ json DialogueNode::memory_tool(MemoryOperation operation,const std::string &cont
   request.content=content;request.delay_seconds=delay;
   memory_->publish(request);
   const auto deadline=std::chrono::steady_clock::now()+3s;
-  while(tool_results_[id].is_null()&&!cancelled(generation)&&std::chrono::steady_clock::now()<deadline)
+  while(tool_results_[id].is_null()&&!Cancelled(generation)&&std::chrono::steady_clock::now()<deadline)
     tool_cv_.wait_for(lock,100ms);
   json result=tool_results_[id];tool_results_.erase(id);
-  if(result.is_null())return failure(cancelled(generation)?"cancelled":"memory response timeout; execution may have occurred, do not retry automatically");
+  if(result.is_null())return Failure(Cancelled(generation)?"cancelled":"memory response timeout; execution may have occurred, do not retry automatically");
   return result;
 }
 
-json DialogueNode::execute_tool(const std::string &name,const json &args,std::uint64_t generation,bool &music_started) {
-  if(cancelled(generation))return failure("cancelled");
+json DialogueNode::ExecuteTool(const std::string &name,const json &args,std::uint64_t generation,bool &music_started) {
+  if(Cancelled(generation))return Failure("cancelled");
   try {
     if(name=="get_current_time") {
-      keys(args,{});
+      ValidateKeys(args,{});
       const auto epoch=std::time(nullptr);auto beijing=epoch+8*3600;
       std::tm now{};gmtime_r(&beijing,&now);char stamp[40];
       std::strftime(stamp,sizeof(stamp),"%Y-%m-%dT%H:%M:%S+08:00",&now);
@@ -136,21 +136,21 @@ json DialogueNode::execute_tool(const std::string &name,const json &args,std::ui
         {"timezone","Asia/Shanghai"},{"unix_seconds",epoch},{"source","board_system_clock"}};
     }
     if(name=="get_volume") {
-      keys(args,{});
-      if(!volume_get_client_->service_is_ready())return failure("volume service unavailable");
+      ValidateKeys(args,{});
+      if(!volume_get_client_->service_is_ready())return Failure("volume service unavailable");
       auto future=volume_get_client_->async_send_request(std::make_shared<xiaocai_msgs::srv::GetVolume::Request>());
       const auto deadline=std::chrono::steady_clock::now()+3s;
-      while(!cancelled(generation)&&std::chrono::steady_clock::now()<deadline) {
+      while(!Cancelled(generation)&&std::chrono::steady_clock::now()<deadline) {
         if(future.wait_for(100ms)==std::future_status::ready)return {{"ok",true},{"percent",future.get()->percent}};
       }
       volume_get_client_->remove_pending_request(future);
-      return failure(cancelled(generation)?"cancelled":"volume service timeout");
+      return Failure(Cancelled(generation)?"cancelled":"volume service timeout");
     }
     if(name=="set_volume") {
-      keys(args,{"action","percent"});const auto action=text_arg(args,"action");
+      ValidateKeys(args,{"action","percent"});const auto action=TextArg(args,"action");
       xiaocai_msgs::msg::VolumeCommand command;
       using Action=xiaocai_robot::common::VolumeAction;
-      if(action=="set"){command.action=static_cast<std::uint8_t>(Action::Set);command.percent=int_arg(args,"percent",0,150);}
+      if(action=="set"){command.action=static_cast<std::uint8_t>(Action::Set);command.percent=IntArg(args,"percent",0,150);}
       else if(action=="up"||action=="down") {
         if(args.contains("percent"))throw std::runtime_error("percent is only valid for action set");
         command.action=static_cast<std::uint8_t>(action=="up"?Action::Up:Action::Down);
@@ -158,76 +158,76 @@ json DialogueNode::execute_tool(const std::string &name,const json &args,std::ui
       std::unique_lock<std::mutex> lock(tool_mutex_);
       tool_volume_pending_=true;tool_volume_result_=nullptr;volume_command_->publish(command);
       const auto deadline=std::chrono::steady_clock::now()+3s;
-      while(tool_volume_result_.is_null()&&!cancelled(generation)&&std::chrono::steady_clock::now()<deadline)tool_cv_.wait_for(lock,100ms);
+      while(tool_volume_result_.is_null()&&!Cancelled(generation)&&std::chrono::steady_clock::now()<deadline)tool_cv_.wait_for(lock,100ms);
       auto result=tool_volume_result_;tool_volume_pending_=false;
-      return result.is_null()?failure("volume response unavailable; do not automatically repeat adjustment"):result;
+      return result.is_null()?Failure("volume response unavailable; do not automatically repeat adjustment"):result;
     }
     if(name=="get_music_status") {
-      keys(args,{});std::lock_guard<std::mutex> lock(tool_mutex_);
-      if(!music_sequence_)return failure("music node unavailable");
+      ValidateKeys(args,{});std::lock_guard<std::mutex> lock(tool_mutex_);
+      if(!music_sequence_)return Failure("music node unavailable");
       return {{"ok",true},{"state",music_state_.state},{"title",music_state_.title},
         {"position_seconds",music_state_.position_seconds},{"duration_seconds",music_state_.duration_seconds},
         {"state_labels",{{"0","stopped"},{"1","searching"},{"2","playing"},{"3","paused"},{"4","error"}}}};
     }
     if(name=="control_music") {
-      keys(args,{"action","query"});const auto action=text_arg(args,"action");
+      ValidateKeys(args,{"action","query"});const auto action=TextArg(args,"action");
       const std::set<std::string> actions={"play","pause","resume","stop","next","previous"};
       if(!actions.count(action))throw std::runtime_error("invalid music action");
       xiaocai_msgs::msg::Intent command;command.intent="music_"+action;
       command.request_id="tool-music-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+"-"+std::to_string(++tool_id_);
-      if(action=="play")command.content=text_arg(args,"query");
+      if(action=="play")command.content=TextArg(args,"query");
       else if(args.contains("query"))throw std::runtime_error("query is only valid for play");
       std::unique_lock<std::mutex> lock(tool_mutex_);
       const auto sequence=music_sequence_;music_command_->publish(command);
       const auto expected=static_cast<std::uint8_t>(action=="stop"?MusicState::Stopped:action=="pause"?MusicState::Paused:MusicState::Playing);
       const auto deadline=std::chrono::steady_clock::now()+40s;
-      while(!cancelled(generation)&&std::chrono::steady_clock::now()<deadline) {
+      while(!Cancelled(generation)&&std::chrono::steady_clock::now()<deadline) {
         if(music_sequence_>sequence&&music_state_.request_id==command.request_id&&(music_state_.state==expected||music_state_.state==static_cast<std::uint8_t>(MusicState::Error))) {
-          if(music_state_.state==static_cast<std::uint8_t>(MusicState::Error))return failure(music_state_.error);
+          if(music_state_.state==static_cast<std::uint8_t>(MusicState::Error))return Failure(music_state_.error);
           music_started=expected==static_cast<std::uint8_t>(MusicState::Playing);
           return {{"ok",true},{"state",music_state_.state},{"title",music_state_.title}};
         }
         tool_cv_.wait_for(lock,100ms);
       }
-      return failure(cancelled(generation)?"cancelled":"music response timeout; execution may still be pending, do not retry automatically");
+      return Failure(Cancelled(generation)?"cancelled":"music response timeout; execution may still be pending, do not retry automatically");
     }
-    if(name=="list_memories") {keys(args,{});return memory_tool(MemoryOperation::ListFacts,{},0,generation);}
+    if(name=="list_memories") {ValidateKeys(args,{});return MemoryTool(MemoryOperation::ListFacts,{},0,generation);}
     if(name=="save_memory"||name=="forget_memory") {
-      keys(args,{"content"});return memory_tool(name=="save_memory"?MemoryOperation::SaveFact:MemoryOperation::ForgetFact,text_arg(args,"content"),0,generation);
+      ValidateKeys(args,{"content"});return MemoryTool(name=="save_memory"?MemoryOperation::SaveFact:MemoryOperation::ForgetFact,TextArg(args,"content"),0,generation);
     }
     if(name=="create_reminder") {
-      keys(args,{"content","delay_seconds"});
-      return memory_tool(MemoryOperation::AddReminder,text_arg(args,"content"),int_arg(args,"delay_seconds",1,2592000),generation);
+      ValidateKeys(args,{"content","delay_seconds"});
+      return MemoryTool(MemoryOperation::AddReminder,TextArg(args,"content"),IntArg(args,"delay_seconds",1,2592000),generation);
     }
-    return failure("unknown tool; only listed robot tools are allowed");
-  } catch(const std::exception &e){return failure(e.what());}
+    return Failure("unknown tool; only listed robot tools are allowed");
+  } catch(const std::exception &e){return Failure(e.what());}
 }
 
-json DialogueNode::completion(const json &messages,std::uint64_t generation) {
+json DialogueNode::Completion(const json &messages,std::uint64_t generation) {
   const char *key=std::getenv("DEEPSEEK_API_KEY");
   if(!key||!*key)throw std::runtime_error("DEEPSEEK_API_KEY missing");
-  const auto body=json{{"model",model_},{"messages",messages},{"tools",tool_definitions()},
+  const auto body=json{{"model",model_},{"messages",messages},{"tools",ToolDefinitions()},
     {"tool_choice","auto"},{"thinking",{{"type","disabled"}}},{"max_tokens",1024},{"stream",false}}.dump();
   std::string response,auth="Authorization: Bearer "+std::string(key);
   auto *curl=curl_easy_init();if(!curl)throw std::runtime_error("curl initialization failed");
   curl_slist *headers=nullptr;headers=curl_slist_append(headers,"Content-Type: application/json");headers=curl_slist_append(headers,auth.c_str());
-  Transfer transfer{[this,generation]{return cancelled(generation);}};
+  Transfer transfer{[this,generation]{return Cancelled(generation);}};
   curl_easy_setopt(curl,CURLOPT_URL,api_url_.c_str());
   curl_easy_setopt(curl,CURLOPT_HTTPHEADER,headers);
   curl_easy_setopt(curl,CURLOPT_POSTFIELDS,body.c_str());curl_easy_setopt(curl,CURLOPT_POSTFIELDSIZE,(long)body.size());
-  curl_easy_setopt(curl,CURLOPT_WRITEFUNCTION,append_response);curl_easy_setopt(curl,CURLOPT_WRITEDATA,&response);
+  curl_easy_setopt(curl,CURLOPT_WRITEFUNCTION,AppendResponse);curl_easy_setopt(curl,CURLOPT_WRITEDATA,&response);
   curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,8L);curl_easy_setopt(curl,CURLOPT_TIMEOUT,25L);curl_easy_setopt(curl,CURLOPT_NOSIGNAL,1L);
-  curl_easy_setopt(curl,CURLOPT_NOPROGRESS,0L);curl_easy_setopt(curl,CURLOPT_XFERINFOFUNCTION,abort_transfer);curl_easy_setopt(curl,CURLOPT_XFERINFODATA,&transfer);
+  curl_easy_setopt(curl,CURLOPT_NOPROGRESS,0L);curl_easy_setopt(curl,CURLOPT_XFERINFOFUNCTION,AbortTransfer);curl_easy_setopt(curl,CURLOPT_XFERINFODATA,&transfer);
   const auto code=curl_easy_perform(curl);long status=0;curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&status);
   curl_slist_free_all(headers);curl_easy_cleanup(curl);
-  log_manager_.logger()->info("DeepSeek completion: HTTP={} curl={}",status,(int)code);
-  const auto parsed=xc::parse(response);
+  LOG_INFO("DeepSeek completion: HTTP={} curl={}",status,(int)code);
+  const auto parsed=xc::Parse(response);
   if(code!=CURLE_OK||status!=200||!parsed.is_object()||!parsed.contains("choices")||!parsed["choices"].is_array()||parsed["choices"].empty())
     throw std::runtime_error("DeepSeek request failed (HTTP "+std::to_string(status)+")");
   return parsed["choices"][0].at("message");
 }
 
-void DialogueNode::chat(const std::string &text,const std::string &facts,std::uint64_t generation) {
+void DialogueNode::Chat(const std::string &text,const std::string &facts,std::uint64_t generation) {
   json messages=json::array();
   std::string system="你是桌面陪伴机器人小蔡，安静、体贴，用自然简短中文回答，通常一两句。"
     "查询实时日期时间、实际音量、音乐状态必须调用提供的本地工具。操作音量、音乐、记忆、提醒也必须调用工具，只有ok=true才可说已完成。"
@@ -241,9 +241,9 @@ void DialogueNode::chat(const std::string &text,const std::string &facts,std::ui
   bool music_started=false;int calls_used=0;
   std::map<std::string,std::pair<std::string,json>> executed;
   std::string answer;
-  for(int round=0;round<5&&!cancelled(generation);++round) {
-    auto assistant=completion(messages,generation);
-    if(cancelled(generation))return;
+  for(int round=0;round<5&&!Cancelled(generation);++round) {
+    auto assistant=Completion(messages,generation);
+    if(Cancelled(generation))return;
     if(!assistant.is_object())throw std::runtime_error("invalid assistant message");
     assistant["role"]="assistant";
     const bool has_tools=assistant.contains("tool_calls")&&assistant["tool_calls"].is_array()&&!assistant["tool_calls"].empty();
@@ -254,26 +254,26 @@ void DialogueNode::chat(const std::string &text,const std::string &facts,std::ui
     if(round==4||assistant["tool_calls"].size()>static_cast<size_t>(8-calls_used))throw std::runtime_error("tool call limit exceeded");
     messages.push_back(assistant);
     for(const auto &call:assistant["tool_calls"]) {
-      if(cancelled(generation))return;
+      if(Cancelled(generation))return;
       const auto id=call.at("id").get<std::string>();
       const auto name=call.at("function").at("name").get<std::string>();
       const auto arguments=call.at("function").at("arguments").get<std::string>();
       if(id.empty())throw std::runtime_error("missing tool call id");
       json result;
       const auto signature=name+"\n"+arguments;
-      if(executed.count(id))result=executed.at(id).first==signature?executed.at(id).second:failure("tool_call_id reused with different arguments");
+      if(executed.count(id))result=executed.at(id).first==signature?executed.at(id).second:Failure("tool_call_id reused with different arguments");
       else {
-        const auto args=xc::parse(arguments);
-        result=execute_tool(name,args,generation,music_started);executed[id]={signature,result};
+        const auto args=xc::Parse(arguments);
+        result=ExecuteTool(name,args,generation,music_started);executed[id]={signature,result};
       }
       ++calls_used;
-      log_manager_.logger()->info("Local tool: name={} ok={}",name,result.value("ok",false));
+      LOG_INFO("Local tool: name={} ok={}",name,result.value("ok",false));
       messages.push_back({{"role","tool"},{"tool_call_id",id},{"content",result.dump()}});
     }
   }
-  if(cancelled(generation))return;
+  if(Cancelled(generation))return;
   if(answer.empty())throw std::runtime_error("no final answer");
-  answer=xc::utf8_prefix(answer,400);
+  answer=xc::Utf8Prefix(answer,400);
   history_.push_back({{"role","user"},{"content",text}});history_.push_back({{"role","assistant"},{"content",answer}});
   if(history_.size()>8)history_.erase(history_.begin(),history_.begin()+2);
   // Speech automatically pauses music. A successfully started song is itself the
@@ -281,7 +281,7 @@ void DialogueNode::chat(const std::string &text,const std::string &facts,std::ui
   bool music_playing=false;
   {std::lock_guard<std::mutex> lock(tool_mutex_);music_playing=music_state_.state==static_cast<std::uint8_t>(MusicState::Playing);}
   if(music_started&&music_playing) {
-    log_manager_.logger()->info("Music playing; final response received, voice acknowledgement omitted");
-    publish_state(xiaocai_robot::common::RobotState::Idle);
-  } else speak(answer);
+    LOG_INFO("Music playing; final response received, voice acknowledgement omitted");
+    PublishState(xiaocai_robot::common::RobotState::Idle);
+  } else Speak(answer);
 }

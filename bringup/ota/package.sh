@@ -13,13 +13,13 @@ fi
 
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/xiaocai-package.XXXXXX")"
 temp_archive=""
-cleanup() {
+Cleanup() {
   if [[ -n "$temp_archive" ]]; then
     rm -f "$temp_archive"
   fi
   rm -rf "$temp_dir"
 }
-trap cleanup EXIT
+trap Cleanup EXIT
 
 payload="$temp_dir/xiaocai_robot"
 mkdir -p "$payload/bin" "$payload/config" "$payload/resource" "$payload/thirdparty" "$payload/msgs" "$payload/bringup/scripts" "$payload/bringup/systemd"

@@ -5,7 +5,7 @@
 
 namespace {
 
-std::filesystem::path default_config_path() {
+std::filesystem::path DefaultConfigPath() {
   if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
     return std::filesystem::path(root) / "audio_io_node" / "biz_config.toml";
   }
@@ -18,8 +18,8 @@ std::filesystem::path default_config_path() {
 
 AudioIoConfig::AudioIoConfig()
     : xc::NodeConfigBase(
-          default_config_path()) {
-  const auto *section = document()["audio_io"].as_table();
+          DefaultConfigPath()) {
+  const auto *section = Document()["audio_io"].as_table();
   if (!section) return;
   if (auto value = (*section)["capture_device"].value<std::string>()) settings_.capture_device = *value;
   if (auto value = (*section)["playback_device"].value<std::string>()) settings_.playback_device = *value;

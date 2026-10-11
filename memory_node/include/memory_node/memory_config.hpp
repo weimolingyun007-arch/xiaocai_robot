@@ -12,7 +12,7 @@ struct MemorySettings {
 class MemoryConfig : public xc::NodeConfigBase {
 public:
   MemoryConfig();
-  const MemorySettings &settings() const noexcept { return settings_; }
+  const MemorySettings &Settings() const noexcept { return settings_; }
 
 private:
   MemorySettings settings_;

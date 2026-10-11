@@ -16,7 +16,7 @@ public:
 private:
   void InitPublishers();
   void InitSubscribers();
-  void on_text(std::string text);
+  void OnText(std::string text);
 
   IntentConfig intent_config_;
   xc::LogManager log_manager_;

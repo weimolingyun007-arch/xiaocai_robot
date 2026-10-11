@@ -15,16 +15,16 @@
 
 namespace xc {
 using json = nlohmann::json;
-inline std_msgs::msg::String str(const std::string &value) {
+inline std_msgs::msg::String Str(const std::string &value) {
   std_msgs::msg::String msg; msg.data = value; return msg;
 }
-inline std_msgs::msg::String js(const json &value) { return str(value.dump()); }
-inline json parse(const std::string &s) { return json::parse(s, nullptr, false); }
-inline double monotonic() {
+inline std_msgs::msg::String Js(const json &value) { return Str(value.dump()); }
+inline json Parse(const std::string &s) { return json::parse(s, nullptr, false); }
+inline double Monotonic() {
   using clock = std::chrono::steady_clock;
   return std::chrono::duration<double>(clock::now().time_since_epoch()).count();
 }
-inline int run(const std::vector<std::string> &args) {
+inline int Run(const std::vector<std::string> &args) {
   pid_t pid = fork();
   if (pid < 0) return -1;
   if (pid == 0) {
@@ -37,7 +37,7 @@ inline int run(const std::vector<std::string> &args) {
   while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
   return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
-inline std::string trim(std::string value) {
+inline std::string Trim(std::string value) {
   const std::vector<std::string> marks={"，","。","！","？"};
   auto ascii=[](unsigned char c){return c==' '||c=='\t'||c=='\r'||c=='\n'||c==','||c=='.'||c=='!'||c=='?';};
   bool changed=true;
@@ -52,7 +52,7 @@ inline std::string trim(std::string value) {
   }
   return value;
 }
-inline std::string utf8_prefix(const std::string &value,size_t limit) {
+inline std::string Utf8Prefix(const std::string &value,size_t limit) {
   if(value.size()<=limit)return value;
   size_t end=limit;
   while(end>0 && (static_cast<unsigned char>(value[end])&0xc0)==0x80)--end;

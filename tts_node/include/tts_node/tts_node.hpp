@@ -14,7 +14,7 @@ public:
 private:
   void InitPublishers();
   void InitSubscribers();
-  void synthesize(std::string text);
+  void Synthesize(std::string text);
   TtsConfig tts_config_;
   xc::LogManager log_manager_;
   const SherpaOnnxOfflineTts *tts_=nullptr;std::string model_,lexicon_,tokens_,fsts_;int speaker_=2,id_=0;

@@ -7,7 +7,7 @@
 
 namespace {
 
-std::filesystem::path default_config_path() {
+std::filesystem::path DefaultConfigPath() {
   if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
     return std::filesystem::path(root) / "intent_node" / "biz_config.toml";
   }
@@ -18,7 +18,7 @@ std::filesystem::path default_config_path() {
 
 }  // namespace
 
-IntentConfig::IntentConfig() : IntentConfig(default_config_path()) {}
+IntentConfig::IntentConfig() : IntentConfig(DefaultConfigPath()) {}
 
 IntentConfig::IntentConfig(std::filesystem::path config_path)
     : xc::NodeConfigBase(std::move(config_path)) {}

@@ -16,7 +16,7 @@ struct MusicSettings {
 class MusicConfig : public xc::NodeConfigBase {
 public:
   MusicConfig();
-  const MusicSettings &settings() const noexcept { return settings_; }
+  const MusicSettings &Settings() const noexcept { return settings_; }
 
 private:
   MusicSettings settings_;

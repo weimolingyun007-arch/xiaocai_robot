@@ -35,23 +35,23 @@ private:
   void InitSubscribers();
   void InitClients();
   void InitTimers();
-  void speak(const std::string &text);
-  void request(xiaocai_robot::common::MemoryOperation operation,
+  void Speak(const std::string &text);
+  void Request(xiaocai_robot::common::MemoryOperation operation,
       const std::string &content={},int32_t delay_seconds=0,bool enabled=false);
-  void publish_state(xiaocai_robot::common::RobotState state);
-  void on_intent(const xiaocai_msgs::msg::Intent &message);
-  void on_result(const xiaocai_msgs::msg::MemoryResult &message);
-  void on_due(const xiaocai_msgs::msg::Reminder &message);
-  void chat(const std::string &text,const std::string &facts,std::uint64_t generation);
-  void enqueue_chat(const std::string &text);
-  void chat_worker();
-  bool cancelled(std::uint64_t generation) const;
-  xc::json execute_tool(const std::string &name,const xc::json &arguments,
+  void PublishState(xiaocai_robot::common::RobotState state);
+  void OnIntent(const xiaocai_msgs::msg::Intent &message);
+  void OnResult(const xiaocai_msgs::msg::MemoryResult &message);
+  void OnDue(const xiaocai_msgs::msg::Reminder &message);
+  void Chat(const std::string &text,const std::string &facts,std::uint64_t generation);
+  void EnqueueChat(const std::string &text);
+  void ChatWorker();
+  bool Cancelled(std::uint64_t generation) const;
+  xc::json ExecuteTool(const std::string &name,const xc::json &arguments,
                        std::uint64_t generation,bool &music_started);
-  xc::json memory_tool(xiaocai_robot::common::MemoryOperation operation,
+  xc::json MemoryTool(xiaocai_robot::common::MemoryOperation operation,
                        const std::string &content,int delay,std::uint64_t generation);
-  xc::json completion(const xc::json &messages,std::uint64_t generation);
-  static xc::json tool_definitions();
+  xc::json Completion(const xc::json &messages,std::uint64_t generation);
+  static xc::json ToolDefinitions();
   DialogueConfig dialogue_config_;
   xc::LogManager log_manager_;
   std::string api_url_,model_;std::atomic<bool> quiet_{false};bool loaded_=false;int next_id_=0;

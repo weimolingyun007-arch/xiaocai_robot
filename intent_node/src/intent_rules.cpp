@@ -52,13 +52,13 @@ const std::regex kReminderPattern(
 
 }  // namespace
 
-bool IntentRules::is_compound_request(const std::string &text) {
+bool IntentRules::IsCompoundRequest(const std::string &text) {
   if (std::regex_search(text, kCompoundWordPattern)) return true;
   return std::regex_search(text, kTimeQuestionPattern) &&
          std::regex_search(text, kOtherActionPattern);
 }
 
-int IntentRules::chinese_number(const std::string &text) {
+int IntentRules::ChineseNumber(const std::string &text) {
   if (!text.empty() && std::all_of(text.begin(), text.end(), [](unsigned char c) {
         return std::isdigit(c);
       })) {
@@ -69,7 +69,7 @@ int IntentRules::chinese_number(const std::string &text) {
 
   const std::array<std::string, 10> digits{
       "零", "一", "二", "三", "四", "五", "六", "七", "八", "九"};
-  const auto digit_value = [&digits](const std::string &value) {
+  const auto DigitValue = [&digits](const std::string &value) {
     if (value == "两") return 2;
     for (int i = 0; i < static_cast<int>(digits.size()); ++i) {
       if (value == digits[static_cast<size_t>(i)]) return i;
@@ -79,15 +79,15 @@ int IntentRules::chinese_number(const std::string &text) {
 
   const size_t ten_position = text.find("十");
   if (ten_position != std::string::npos) {
-    const int tens = ten_position == 0 ? 1 : digit_value(text.substr(0, ten_position));
+    const int tens = ten_position == 0 ? 1 : DigitValue(text.substr(0, ten_position));
     const size_t ones_position = ten_position + std::string("十").size();
-    const int ones = ones_position >= text.size() ? 0 : digit_value(text.substr(ones_position));
+    const int ones = ones_position >= text.size() ? 0 : DigitValue(text.substr(ones_position));
     return tens * 10 + ones;
   }
-  return digit_value(text);
+  return DigitValue(text);
 }
 
-bool IntentRules::parse_music_intent(const std::string &text, IntentResult &result) {
+bool IntentRules::ParseMusicIntent(const std::string &text, IntentResult &result) {
   for (const auto &rule : kMusicControlRules) {
     if (!std::regex_match(text, rule.pattern)) continue;
     result.intent = rule.intent;
@@ -118,9 +118,9 @@ bool IntentRules::parse_music_intent(const std::string &text, IntentResult &resu
   return true;
 }
 
-IntentResult IntentRules::classify(std::string text) const {
+IntentResult IntentRules::Classify(std::string text) const {
   IntentResult result;
-  result.normalized_text = xc::trim(text);
+  result.normalized_text = xc::Trim(text);
   result.normalized_text.erase(
       std::remove_if(result.normalized_text.begin(), result.normalized_text.end(),
                      [](unsigned char character) {
@@ -129,17 +129,17 @@ IntentResult IntentRules::classify(std::string text) const {
                      }),
       result.normalized_text.end());
 
-  if (result.normalized_text.empty() || is_compound_request(result.normalized_text)) {
+  if (result.normalized_text.empty() || IsCompoundRequest(result.normalized_text)) {
     return result;
   }
-  if (parse_music_intent(result.normalized_text, result)) return result;
+  if (ParseMusicIntent(result.normalized_text, result)) return result;
 
   std::smatch match;
   if (std::regex_search(result.normalized_text, kVolumeGetPattern)) {
     result.intent = "volume_get";
   } else if (std::regex_search(result.normalized_text, match, kVolumeSetPattern)) {
     result.intent = "volume_set";
-    result.volume_percent = std::clamp(chinese_number(match[1]), 0, 150);
+    result.volume_percent = std::clamp(ChineseNumber(match[1]), 0, 150);
   } else if (result.normalized_text.find("静音") != std::string::npos &&
              result.normalized_text.find("取消") == std::string::npos) {
     result.intent = "volume_set";
@@ -157,14 +157,14 @@ IntentResult IntentRules::classify(std::string text) const {
     result.intent = "memory_list";
   } else if (std::regex_search(result.normalized_text, match, kMemoryForgetPattern)) {
     result.intent = "memory_forget";
-    result.content = xc::trim(match[1]);
+    result.content = xc::Trim(match[1]);
   } else if (std::regex_search(result.normalized_text, match, kMemorySavePattern)) {
     result.intent = "memory_save";
-    result.content = xc::trim(match[1]);
+    result.content = xc::Trim(match[1]);
   } else if (std::regex_search(result.normalized_text, match, kReminderPattern)) {
-    const int amount = chinese_number(match[1]);
+    const int amount = ChineseNumber(match[1]);
     const std::string unit = match[2];
-    const std::string reminder_content = xc::trim(match[3]);
+    const std::string reminder_content = xc::Trim(match[3]);
     int seconds_per_unit = 86400;
     if (unit.find("秒") == 0) {
       seconds_per_unit = 1;

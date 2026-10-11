@@ -18,7 +18,7 @@ struct SpeechInputSettings {
 class SpeechInputConfig : public xc::NodeConfigBase {
 public:
   SpeechInputConfig();
-  const SpeechInputSettings &settings() const noexcept { return settings_; }
+  const SpeechInputSettings &Settings() const noexcept { return settings_; }
 
 private:
   SpeechInputSettings settings_;

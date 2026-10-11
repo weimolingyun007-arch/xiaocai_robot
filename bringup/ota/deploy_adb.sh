@@ -48,20 +48,20 @@ if ! command -v adb >/dev/null 2>&1; then
   exit 127
 fi
 serial="$(printenv ANDROID_SERIAL 2>/dev/null || true)"
-run_adb() {
+RunAdb() {
   if [[ -n "$serial" ]]; then command adb -s "$serial" "$@"; else command adb "$@"; fi
 }
-if [[ "$(run_adb get-state 2>/dev/null | tr -d '\r')" != device ]]; then
+if [[ "$(RunAdb get-state 2>/dev/null | tr -d '\r')" != device ]]; then
   echo "No ready ADB device found. Check the board connection." >&2
   exit 1
 fi
 
-remote_arch="$(run_adb shell uname -m | tr -d '\r')"
+remote_arch="$(RunAdb shell uname -m | tr -d '\r')"
 if [[ "$remote_arch" != aarch64 && "$remote_arch" != arm64 ]]; then
   echo "Connected device is not AArch64: $remote_arch" >&2
   exit 1
 fi
-remote_uid="$(run_adb shell id -u | tr -d '\r')"
+remote_uid="$(RunAdb shell id -u | tr -d '\r')"
 if [[ "$remote_uid" != 0 ]]; then
   echo "ADB shell must have root access to migrate and update the runtime under /home/lckfb/xiaocai_robot." >&2
   exit 1
@@ -71,16 +71,16 @@ remote_archive=/home/lckfb/.xiaocai_robot_runtime.tar.gz
 remote_script=/home/lckfb/.xiaocai_robot_runtime_deploy.sh
 expected_sha="$(sha256sum "$archive" | awk '{print $1}')"
 stamp="$(date +%Y%m%d_%H%M%S)_$$"
-remote_sha="$(run_adb shell sha256sum "$remote_archive" 2>/dev/null | awk '{print $1}' | tr -d '\r' || true)"
+remote_sha="$(RunAdb shell sha256sum "$remote_archive" 2>/dev/null | awk '{print $1}' | tr -d '\r' || true)"
 if [[ "$remote_sha" != "$expected_sha" ]]; then
-  run_adb push "$archive" "$remote_archive"
+  RunAdb push "$archive" "$remote_archive"
 fi
 
 local_script="$workspace/bringup/ota/apply_runtime.sh"
 
-run_adb push "$local_script" "$remote_script"
+RunAdb push "$local_script" "$remote_script"
 marker="__XIAOCAI_DEPLOY_STATUS_${stamp}__"
-if ! remote_output="$(run_adb shell "bash '$remote_script' '$remote_archive' '$expected_sha' '$stamp'; status=\$?; rm -f '$remote_script'; printf '${marker}%s\n' \"\$status\"; exit \$status" 2>&1)"; then
+if ! remote_output="$(RunAdb shell "bash '$remote_script' '$remote_archive' '$expected_sha' '$stamp'; status=\$?; rm -f '$remote_script'; printf '${marker}%s\n' \"\$status\"; exit \$status" 2>&1)"; then
   printf '%s\n' "$remote_output" >&2
   exit 1
 fi

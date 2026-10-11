@@ -6,7 +6,7 @@
 
 namespace {
 
-std::filesystem::path default_config_path() {
+std::filesystem::path DefaultConfigPath() {
   if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
     return std::filesystem::path(root) / "music_node" / "biz_config.toml";
   }
@@ -19,9 +19,9 @@ std::filesystem::path default_config_path() {
 
 MusicConfig::MusicConfig()
     : xc::NodeConfigBase(
-          default_config_path()) {
-  settings_.mpv_socket = xiaocai_robot::common::music_socket();
-  const auto *section = document()["music"].as_table();
+          DefaultConfigPath()) {
+  settings_.mpv_socket = xiaocai_robot::common::MusicSocket();
+  const auto *section = Document()["music"].as_table();
   if (!section) return;
   if (auto value = (*section)["cli_path"].value<std::string>()) settings_.cli_path = *value;
   if (auto value = (*section)["mpv_socket"].value<std::string>(); value && !value->empty()) settings_.mpv_socket = *value;

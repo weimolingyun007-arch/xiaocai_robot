@@ -5,7 +5,7 @@
 
 namespace {
 
-std::filesystem::path default_config_path() {
+std::filesystem::path DefaultConfigPath() {
   if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
     return std::filesystem::path(root) / "dialogue_node" / "biz_config.toml";
   }
@@ -18,8 +18,8 @@ std::filesystem::path default_config_path() {
 
 DialogueConfig::DialogueConfig()
     : xc::NodeConfigBase(
-          default_config_path()) {
-  const auto *section = document()["dialogue"].as_table();
+          DefaultConfigPath()) {
+  const auto *section = Document()["dialogue"].as_table();
   if (!section) return;
   if (auto value = (*section)["api_url"].value<std::string>()) settings_.api_url = *value;
   if (auto value = (*section)["model"].value<std::string>()) settings_.model = *value;

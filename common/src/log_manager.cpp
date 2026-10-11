@@ -26,7 +26,7 @@
 namespace xc {
 namespace {
 
-std::string local_date_key(std::time_t timestamp) {
+std::string LocalDateKey(std::time_t timestamp) {
   std::tm local{};
 #if defined(_WIN32)
   localtime_s(&local, &timestamp);
@@ -38,7 +38,7 @@ std::string local_date_key(std::time_t timestamp) {
   return stream.str();
 }
 
-std::string local_file_stamp(std::time_t timestamp) {
+std::string LocalFileStamp(std::time_t timestamp) {
   std::tm local{};
 #if defined(_WIN32)
   localtime_s(&local, &timestamp);
@@ -50,7 +50,7 @@ std::string local_file_stamp(std::time_t timestamp) {
   return stream.str();
 }
 
-std::filesystem::path expand_directory(std::filesystem::path path) {
+std::filesystem::path ExpandDirectory(std::filesystem::path path) {
   const std::string value = path.string();
   if (!value.empty() && value.front() == '~') {
     if (const char *home = std::getenv("HOME")) {
@@ -63,13 +63,13 @@ std::filesystem::path expand_directory(std::filesystem::path path) {
   return path.lexically_normal();
 }
 
-bool is_digit_string(const std::string &value) {
+bool IsDigitString(const std::string &value) {
   return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char character) {
     return std::isdigit(character);
   });
 }
 
-bool parse_log_filename(const std::string &name, const std::string &prefix,
+bool ParseLogFilename(const std::string &name, const std::string &prefix,
                         std::string &stamp, std::size_t &rotation_index) {
   constexpr std::size_t kStampSize = 15U;
   if (name.compare(0, prefix.size(), prefix) != 0 ||
@@ -77,8 +77,8 @@ bool parse_log_filename(const std::string &name, const std::string &prefix,
     return false;
   }
   stamp = name.substr(prefix.size(), kStampSize);
-  if (stamp[8] != '_' || !is_digit_string(stamp.substr(0, 8)) ||
-      !is_digit_string(stamp.substr(9, 6))) {
+  if (stamp[8] != '_' || !IsDigitString(stamp.substr(0, 8)) ||
+      !IsDigitString(stamp.substr(9, 6))) {
     return false;
   }
 
@@ -93,7 +93,7 @@ bool parse_log_filename(const std::string &name, const std::string &prefix,
   }
 
   const std::string index_text = suffix.substr(1U, suffix.size() - 5U);
-  if (!is_digit_string(index_text)) {
+  if (!IsDigitString(index_text)) {
     return false;
   }
   rotation_index = 0U;
@@ -116,15 +116,15 @@ public:
         max_file_size_bytes_(config.max_file_size_bytes),
         max_files_per_day_(config.max_files_per_day), retention_days_(config.retention_days) {
     std::filesystem::create_directories(directory_);
-    begin_day(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+    BeginDay(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
   }
 
 protected:
   void sink_it_(const spdlog::details::log_msg &message) override {
     const auto timestamp = std::chrono::system_clock::to_time_t(message.time);
-    const std::string message_day = local_date_key(timestamp);
+    const std::string message_day = LocalDateKey(timestamp);
     if (message_day != active_day_) {
-      begin_day(timestamp);
+      BeginDay(timestamp);
     }
 
     spdlog::memory_buf_t formatted;
@@ -137,7 +137,7 @@ protected:
     }
 
     if (current_size_ + formatted.size() > max_file_size_bytes_) {
-      rotate_current_day();
+      RotateCurrentDay();
     }
     file_.write(formatted);
     current_size_ = file_.size();
@@ -146,7 +146,7 @@ protected:
   void flush_() override { file_.flush(); }
 
 private:
-  std::filesystem::path filename(std::size_t index) const {
+  std::filesystem::path Filename(std::size_t index) const {
     std::string name = filename_prefix_ + active_stamp_;
     if (index > 0U) {
       name += "." + std::to_string(index);
@@ -154,10 +154,10 @@ private:
     return directory_ / (name + ".log");
   }
 
-  void cleanup_expired(const std::string &today) {
+  void CleanupExpired(const std::string &today) {
     const auto now = std::chrono::system_clock::now();
     const auto cutoff_time = now - std::chrono::hours(24 * (retention_days_ - 1));
-    const auto cutoff = local_date_key(std::chrono::system_clock::to_time_t(cutoff_time));
+    const auto cutoff = LocalDateKey(std::chrono::system_clock::to_time_t(cutoff_time));
     for (const auto &entry : std::filesystem::directory_iterator(directory_)) {
       if (!entry.is_regular_file()) {
         continue;
@@ -165,7 +165,7 @@ private:
       const std::string name = entry.path().filename().string();
       std::string stamp;
       std::size_t rotation_index = 0U;
-      if (!parse_log_filename(name, filename_prefix_, stamp, rotation_index)) {
+      if (!ParseLogFilename(name, filename_prefix_, stamp, rotation_index)) {
         continue;
       }
       const std::string date = stamp.substr(0, 8);
@@ -214,7 +214,7 @@ private:
     }
   }
 
-  std::string latest_stamp_for_day(const std::string &day) const {
+  std::string LatestStampForDay(const std::string &day) const {
     std::string latest_stamp;
     for (const auto &entry : std::filesystem::directory_iterator(directory_)) {
       if (!entry.is_regular_file()) {
@@ -222,7 +222,7 @@ private:
       }
       std::string stamp;
       std::size_t rotation_index = 0U;
-      if (!parse_log_filename(entry.path().filename().string(), filename_prefix_, stamp,
+      if (!ParseLogFilename(entry.path().filename().string(), filename_prefix_, stamp,
                               rotation_index) ||
           stamp.substr(0, 8) != day) {
         continue;
@@ -234,16 +234,16 @@ private:
     return latest_stamp;
   }
 
-  void begin_day(std::time_t timestamp) {
+  void BeginDay(std::time_t timestamp) {
     file_.close();
-    active_day_ = local_date_key(timestamp);
-    cleanup_expired(active_day_);
-    active_stamp_ = latest_stamp_for_day(active_day_);
+    active_day_ = LocalDateKey(timestamp);
+    CleanupExpired(active_day_);
+    active_stamp_ = LatestStampForDay(active_day_);
     if (active_stamp_.empty()) {
-      active_stamp_ = local_file_stamp(timestamp);
+      active_stamp_ = LocalFileStamp(timestamp);
     }
 
-    const auto active_file = filename(0U);
+    const auto active_file = Filename(0U);
     std::error_code error;
     current_size_ = std::filesystem::exists(active_file, error) && !error
                         ? std::filesystem::file_size(active_file, error)
@@ -253,17 +253,17 @@ private:
     }
 
     if (current_size_ >= max_file_size_bytes_) {
-      rotate_current_day();
+      RotateCurrentDay();
     } else {
       file_.open(active_file.string(), false);
     }
   }
 
-  void rotate_current_day() {
+  void RotateCurrentDay() {
     file_.close();
     for (std::size_t index = max_files_per_day_ - 1U; index > 0U; --index) {
-      const auto source = filename(index - 1U);
-      const auto target = filename(index);
+      const auto source = Filename(index - 1U);
+      const auto target = Filename(index);
       std::error_code error;
       std::filesystem::remove(target, error);
       error.clear();
@@ -272,8 +272,8 @@ private:
       }
     }
     std::error_code error;
-    std::filesystem::remove(filename(0U), error);
-    file_.open(filename(0U).string(), true);
+    std::filesystem::remove(Filename(0U), error);
+    file_.open(Filename(0U).string(), true);
     current_size_ = 0U;
   }
 
@@ -288,7 +288,7 @@ private:
   spdlog::details::file_helper file_;
 };
 
-std::string safe_filename(std::string name) {
+std::string SafeFilename(std::string name) {
   std::replace_if(name.begin(), name.end(), [](unsigned char character) {
     return !(std::isalnum(character) || character == '_' || character == '-' || character == '.');
   }, '_');
@@ -298,11 +298,11 @@ std::string safe_filename(std::string name) {
 }  // namespace
 
 LogManager::LogManager(std::string logger_name, LogManagerConfig config) {
-  const std::string file_prefix = safe_filename(logger_name);
+  const std::string file_prefix = SafeFilename(logger_name);
   if (config.directory.empty()) {
     config.directory = std::filesystem::path("/userdata/log") / file_prefix;
   } else {
-    config.directory = expand_directory(std::move(config.directory));
+    config.directory = ExpandDirectory(std::move(config.directory));
   }
   std::vector<spdlog::sink_ptr> sinks;
   try {

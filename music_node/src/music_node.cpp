@@ -16,7 +16,7 @@ extern char **environ;
 namespace { using State = xiaocai_robot::common::MusicState; }
 
 namespace {
-bool send_line(int fd, const std::string &line) {
+bool SendLine(int fd, const std::string &line) {
   std::size_t sent = 0;
   while (sent < line.size()) {
     const auto count = ::send(fd, line.data() + sent, line.size() - sent, MSG_NOSIGNAL);
@@ -27,7 +27,7 @@ bool send_line(int fd, const std::string &line) {
   return true;
 }
 
-bool receive_line(int fd, std::string &line, int timeout_ms) {
+bool ReceiveLine(int fd, std::string &line, int timeout_ms) {
   line.clear();
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   while (std::chrono::steady_clock::now() < deadline && line.size() < 8192) {
@@ -48,7 +48,7 @@ bool receive_line(int fd, std::string &line, int timeout_ms) {
   return false;
 }
 
-int connect_unix(const std::string &path) {
+int ConnectUnix(const std::string &path) {
   const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) return -1;
   sockaddr_un address{};
@@ -65,8 +65,8 @@ int connect_unix(const std::string &path) {
 
 MusicNode::MusicNode()
     : Node("music_node"), music_config_(),
-      log_manager_("music_node", music_config_.logging()) {
-  const auto &settings = music_config_.settings();
+      log_manager_("music_node", music_config_.Logging()) {
+  const auto &settings = music_config_.Settings();
   cli_path_ = declare_parameter<std::string>("cli_path", settings.cli_path);
   socket_path_ = declare_parameter<std::string>("mpv_socket", settings.mpv_socket);
   default_keyword_ = declare_parameter<std::string>("default_keyword", settings.default_keyword);
@@ -75,9 +75,9 @@ MusicNode::MusicNode()
   InitPublishers();
   InitSubscribers();
   InitTimers();
-  set_state(State::Stopped);
-  worker_ = std::thread([this] { work(); });
-  log_manager_.logger()->info("NetEase voice music ready; CLI: {}", cli_path_);
+  SetState(State::Stopped);
+  worker_ = std::thread([this] { Work(); });
+  LOG_INFO("NetEase voice music ready; CLI: {}", cli_path_);
 }
 
 void MusicNode::InitPublishers() {
@@ -88,18 +88,18 @@ void MusicNode::InitPublishers() {
 
 void MusicNode::InitSubscribers() {
   intent_sub_ = create_subscription<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent", 10,
-    [this](xiaocai_msgs::msg::Intent::SharedPtr message) { on_intent(*message); });
+    [this](xiaocai_msgs::msg::Intent::SharedPtr message) { OnIntent(*message); });
   play_sub_ = create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10,
-    [this](xiaocai_msgs::msg::AudioPlay::SharedPtr message) { on_audio_play(message->path); });
+    [this](xiaocai_msgs::msg::AudioPlay::SharedPtr message) { OnAudioPlay(message->path); });
   voice_sub_ = create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10,
     [this](std_msgs::msg::Bool::SharedPtr message) {
       voice_playing_ = message->data;
-      last_voice_at_ = xc::monotonic();
+      last_voice_at_ = xc::Monotonic();
     });
 }
 
 void MusicNode::InitTimers() {
-  timer_ = create_wall_timer(std::chrono::milliseconds(500), [this] { update_state(); });
+  timer_ = create_wall_timer(std::chrono::milliseconds(500), [this] { UpdateState(); });
 }
 
 MusicNode::~MusicNode() {
@@ -107,44 +107,44 @@ MusicNode::~MusicNode() {
   ++revision_;
   ready_.notify_all();
   if (worker_.joinable()) worker_.join();
-  xiaocai_robot::common::mpv_command({"stop"}, socket_path_);
-  close_backend();
+  xiaocai_robot::common::MpvCommand({"stop"}, socket_path_);
+  CloseBackend();
 }
 
-bool MusicNode::current(std::uint64_t revision) const {
+bool MusicNode::Current(std::uint64_t revision) const {
   return !stop_ && !silenced_ && revision_.load() == revision;
 }
 
-void MusicNode::on_audio_play(const std::string &path) {
+void MusicNode::OnAudioPlay(const std::string &path) {
   if (path == "__stop__") {
     silenced_ = true;
     ++revision_;
     { std::lock_guard<std::mutex> lock(jobs_mutex_); jobs_.clear(); }
-    xiaocai_robot::common::mpv_command({"stop"}, socket_path_);
-    close_backend();
-    set_state(State::Stopped);
-    log_manager_.logger()->info("Hush: music stopped and pending requests cancelled");
+    xiaocai_robot::common::MpvCommand({"stop"}, socket_path_);
+    CloseBackend();
+    SetState(State::Stopped);
+    LOG_INFO("Hush: music stopped and pending requests cancelled");
   } else {
     if (path == wake_ack_path_) {
       silenced_ = false;
       ++revision_;
       { std::lock_guard<std::mutex> lock(jobs_mutex_); jobs_.clear(); }
-      xiaocai_robot::common::mpv_command({"stop"}, socket_path_);
-      close_backend();
-      set_state(State::Stopped);
-      log_manager_.logger()->info("Wake acknowledged: continuous music playback ended");
+      xiaocai_robot::common::MpvCommand({"stop"}, socket_path_);
+      CloseBackend();
+      SetState(State::Stopped);
+      LOG_INFO("Wake acknowledged: continuous music playback ended");
       return;
     }
-    last_voice_at_ = xc::monotonic();
-    xiaocai_robot::common::mpv_command({"set_property", "pause", true}, socket_path_);
+    last_voice_at_ = xc::Monotonic();
+    xiaocai_robot::common::MpvCommand({"set_property", "pause", true}, socket_path_);
   }
 }
 
-void MusicNode::on_intent(const xiaocai_msgs::msg::Intent &message) {
+void MusicNode::OnIntent(const xiaocai_msgs::msg::Intent &message) {
   if (message.intent.rfind("music_", 0) != 0 || silenced_) return;
   const auto revision = ++revision_;
   if (message.intent == "music_stop" || message.intent == "music_pause") {
-    xiaocai_robot::common::mpv_command(message.intent == "music_stop"
+    xiaocai_robot::common::MpvCommand(message.intent == "music_stop"
       ? xc::json{"stop"} : xc::json{"set_property", "pause", true}, socket_path_);
   }
   { std::lock_guard<std::mutex> lock(jobs_mutex_);
@@ -152,10 +152,10 @@ void MusicNode::on_intent(const xiaocai_msgs::msg::Intent &message) {
     jobs_.push_back({message.intent, message.content, revision, message.request_id});
   }
   ready_.notify_one();
-  log_manager_.logger()->info("MusicNode intent: {}; query: {}", message.intent, message.content);
+  LOG_INFO("MusicNode intent: {}; query: {}", message.intent, message.content);
 }
 
-void MusicNode::set_state(State state, const std::string &error,const std::string &request_id) {
+void MusicNode::SetState(State state, const std::string &error,const std::string &request_id) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   state_message_.state = static_cast<std::uint8_t>(state);
   state_message_.error = error;
@@ -163,34 +163,34 @@ void MusicNode::set_state(State state, const std::string &error,const std::strin
   state_->publish(state_message_);
 }
 
-void MusicNode::update_state() {
+void MusicNode::UpdateState() {
   using namespace xiaocai_robot::common;
-  maintain_backend();
-  auto idle = mpv_command({"get_property", "idle-active"}, socket_path_);
-  if (!mpv_ok(idle)) return;
+  MaintainBackend();
+  auto idle = MpvCommand({"get_property", "idle-active"}, socket_path_);
+  if (!MpvOk(idle)) return;
   if (silenced_ && !idle.value("data", true)) {
-    mpv_command({"stop"}, socket_path_);
-    set_state(State::Stopped);
+    MpvCommand({"stop"}, socket_path_);
+    SetState(State::Stopped);
     return;
   }
-  auto device = mpv_command({"get_property", "audio-device"}, socket_path_);
-  if (mpv_ok(device) && device.value("data", std::string{}) != audio_device_)
-    mpv_command({"set_property", "audio-device", audio_device_}, socket_path_);
+  auto device = MpvCommand({"get_property", "audio-device"}, socket_path_);
+  if (MpvOk(device) && device.value("data", std::string{}) != audio_device_)
+    MpvCommand({"set_property", "audio-device", audio_device_}, socket_path_);
   if (busy_) return;
-  auto pause = mpv_command({"get_property", "pause"}, socket_path_);
-  if (!mpv_ok(pause)) return;
-  auto position = mpv_command({"get_property", "time-pos"}, socket_path_);
-  auto duration = mpv_command({"get_property", "duration"}, socket_path_);
+  auto pause = MpvCommand({"get_property", "pause"}, socket_path_);
+  if (!MpvOk(pause)) return;
+  auto position = MpvCommand({"get_property", "time-pos"}, socket_path_);
+  auto duration = MpvCommand({"get_property", "duration"}, socket_path_);
   std::lock_guard<std::mutex> lock(state_mutex_);
   if (state_message_.state == static_cast<std::uint8_t>(State::Error) && idle.value("data", true)) return;
   state_message_.state = static_cast<std::uint8_t>(idle.value("data", true) ? State::Stopped
     : pause.value("data", true) ? State::Paused : State::Playing);
-  state_message_.position_seconds = mpv_ok(position) && position["data"].is_number() ? position["data"].get<double>() : 0;
-  state_message_.duration_seconds = mpv_ok(duration) && duration["data"].is_number() ? duration["data"].get<double>() : 0;
+  state_message_.position_seconds = MpvOk(position) && position["data"].is_number() ? position["data"].get<double>() : 0;
+  state_message_.duration_seconds = MpvOk(duration) && duration["data"].is_number() ? duration["data"].get<double>() : 0;
   state_->publish(state_message_);
 }
 
-bool MusicNode::ensure_backend(std::uint64_t revision) {
+bool MusicNode::EnsureBackend(std::uint64_t revision) {
   std::lock_guard<std::mutex> lock(backend_mutex_);
   if (backend_fd_ >= 0) return true;
 
@@ -198,20 +198,20 @@ bool MusicNode::ensure_backend(std::uint64_t revision) {
   const auto slash = directory.find_last_of('/');
   directory = slash == std::string::npos ? "." : directory.substr(0, slash);
   const std::string control_path = directory + "/player-daemon.sock";
-  const double deadline = xc::monotonic() + 5.0;
-  while (current(revision) && xc::monotonic() < deadline) {
-    int subscription = connect_unix(control_path);
+  const double deadline = xc::Monotonic() + 5.0;
+  while (Current(revision) && xc::Monotonic() < deadline) {
+    int subscription = ConnectUnix(control_path);
     if (subscription >= 0) {
       const std::string request = xc::json{{"command", "subscribe"},
         {"role", "observer"}, {"controllerType", "cli"}}.dump() + "\n";
       std::string snapshot;
-      if (send_line(subscription, request) && receive_line(subscription, snapshot, 1200)) {
-        const auto event = xc::parse(snapshot);
+      if (SendLine(subscription, request) && ReceiveLine(subscription, snapshot, 1200)) {
+        const auto event = xc::Parse(snapshot);
         if (event.is_object() && event.value("event", std::string{}) == "stateSnapshot") {
           const int flags = ::fcntl(subscription, F_GETFL, 0);
           if (flags >= 0) ::fcntl(subscription, F_SETFL, flags | O_NONBLOCK);
           backend_fd_ = subscription;
-          log_manager_.logger()->info("Subscribed to ncm-cli player daemon state");
+          LOG_INFO("Subscribed to ncm-cli player daemon state");
           return true;
         }
       }
@@ -222,7 +222,7 @@ bool MusicNode::ensure_backend(std::uint64_t revision) {
   return false;
 }
 
-void MusicNode::maintain_backend() {
+void MusicNode::MaintainBackend() {
   std::lock_guard<std::mutex> lock(backend_mutex_);
   if (backend_fd_ < 0) return;
   char buffer[4096];
@@ -233,18 +233,18 @@ void MusicNode::maintain_backend() {
     if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
     ::close(backend_fd_);
     backend_fd_ = -1;
-    log_manager_.logger()->warn("ncm-cli player daemon subscription disconnected");
+    LOG_WARN("ncm-cli player daemon subscription disconnected");
     return;
   }
 }
 
-void MusicNode::close_backend() {
+void MusicNode::CloseBackend() {
   std::lock_guard<std::mutex> lock(backend_mutex_);
   if (backend_fd_ >= 0) ::close(backend_fd_);
   backend_fd_ = -1;
 }
 
-MusicNode::Result MusicNode::cli(const std::vector<std::string> &arguments, std::uint64_t revision) {
+MusicNode::Result MusicNode::Cli(const std::vector<std::string> &arguments, std::uint64_t revision) {
   int output[2];
   if (pipe2(output, O_CLOEXEC) != 0) return {};
   std::vector<std::string> args{cli_path_};
@@ -268,7 +268,7 @@ MusicNode::Result MusicNode::cli(const std::vector<std::string> &arguments, std:
   if (error != 0) { close(output[0]); return {}; }
   fcntl(output[0], F_SETFL, O_NONBLOCK);
   std::string text;
-  const double until = xc::monotonic() + 30;
+  const double until = xc::Monotonic() + 30;
   int status = 0;
   bool exited = false, cancelled = false;
   while (!exited) {
@@ -277,11 +277,11 @@ MusicNode::Result MusicNode::cli(const std::vector<std::string> &arguments, std:
     while ((count = read(output[0], buffer, sizeof(buffer))) > 0)
       if (text.size() < 2 * 1024 * 1024) text.append(buffer, count);
     exited = waitpid(pid, &status, WNOHANG) == pid;
-    if (!exited && (!current(revision) || xc::monotonic() > until)) {
+    if (!exited && (!Current(revision) || xc::Monotonic() > until)) {
       cancelled = true;
       kill(-pid, SIGTERM);
-      const double grace = xc::monotonic() + 0.5;
-      while (waitpid(pid, &status, WNOHANG) == 0 && xc::monotonic() < grace)
+      const double grace = xc::Monotonic() + 0.5;
+      while (waitpid(pid, &status, WNOHANG) == 0 && xc::Monotonic() < grace)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
       kill(-pid, SIGKILL);
       while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
@@ -297,38 +297,38 @@ MusicNode::Result MusicNode::cli(const std::vector<std::string> &arguments, std:
   const auto begin = text.find('{');
   const auto end = text.rfind('}');
   if (begin != std::string::npos && end != std::string::npos && end >= begin)
-    data = xc::parse(text.substr(begin, end - begin + 1));
+    data = xc::Parse(text.substr(begin, end - begin + 1));
   return {!cancelled && WIFEXITED(status) && WEXITSTATUS(status) == 0, data, text};
 }
 
-bool MusicNode::wait_for_speech(std::uint64_t revision) {
-  const double until = xc::monotonic() + 20;
-  while (current(revision) && xc::monotonic() < until) {
-    if (!voice_playing_ && xc::monotonic() - last_voice_at_.load() > 0.5) return true;
+bool MusicNode::WaitForSpeech(std::uint64_t revision) {
+  const double until = xc::Monotonic() + 20;
+  while (Current(revision) && xc::Monotonic() < until) {
+    if (!voice_playing_ && xc::Monotonic() - last_voice_at_.load() > 0.5) return true;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   return false;
 }
 
-void MusicNode::fail(const Job &job, const std::string &message) {
-  if (!current(job.revision)) return;
-  set_state(State::Error, message,job.request_id);
-  if(job.request_id.empty())tts_->publish(xc::str(message));
-  log_manager_.logger()->warn("{}", message);
+void MusicNode::Fail(const Job &job, const std::string &message) {
+  if (!Current(job.revision)) return;
+  SetState(State::Error, message,job.request_id);
+  if(job.request_id.empty())tts_->publish(xc::Str(message));
+  LOG_WARN("{}", message);
 }
 
-void MusicNode::execute(const Job &job) {
+void MusicNode::Execute(const Job &job) {
   using namespace xiaocai_robot::common;
   if (job.intent == "music_play") {
-    set_state(State::Searching,{},job.request_id);
-    mpv_command({"set_property", "pause", true}, socket_path_);
+    SetState(State::Searching,{},job.request_id);
+    MpvCommand({"set_property", "pause", true}, socket_path_);
     const std::string keyword = job.content.empty() ? default_keyword_ : job.content;
-    auto search = cli({"search", "song", "--keyword", keyword}, job.revision);
-    if (!current(job.revision)) return;
+    auto search = Cli({"search", "song", "--keyword", keyword}, job.revision);
+    if (!Current(job.revision)) return;
     if (!search.ok || !search.data.is_object() || search.data.value("code", 0) != 200 || !search.data.contains("data") ||
         !search.data["data"].is_object() || !search.data["data"].contains("records") ||
         !search.data["data"]["records"].is_array()) {
-      fail(job, "网易云搜索暂时没成功，请稍后再试。"); return;
+      Fail(job, "网易云搜索暂时没成功，请稍后再试。"); return;
     }
     const auto &songs = search.data["data"]["records"];
     const xc::json *selected = nullptr;
@@ -338,25 +338,25 @@ void MusicNode::execute(const Job &job) {
       if (!selected) selected = &song;
       if (song.value("name", std::string{}) == keyword) { selected = &song; break; }
     }
-    if (!selected) { fail(job, "没有找到当前账号可以播放的歌曲，请换一首。"); return; }
-    if (!wait_for_speech(job.revision)) return;
+    if (!selected) { Fail(job, "没有找到当前账号可以播放的歌曲，请换一首。"); return; }
+    if (!WaitForSpeech(job.revision)) return;
     // Prevent old songs from being resumed by mpv when replacing the queue entry.
-    mpv_command({"stop"}, socket_path_);
+    MpvCommand({"stop"}, socket_path_);
     const std::vector<std::string> play_args{"play", "--song", "--encrypted-id",
       selected->value("id", std::string{}), "--original-id", (*selected)["originalId"].dump(),
       "--output", "json"};
-    auto play = cli(play_args, job.revision);
-    if (!current(job.revision)) { mpv_command({"stop"}, socket_path_); return; }
-    if (!ensure_backend(job.revision)) {
-      mpv_command({"stop"}, socket_path_);
-      fail(job, "网易云播放器后台没有保持连接，请稍后再试。"); return;
+    auto play = Cli(play_args, job.revision);
+    if (!Current(job.revision)) { MpvCommand({"stop"}, socket_path_); return; }
+    if (!EnsureBackend(job.revision)) {
+      MpvCommand({"stop"}, socket_path_);
+      Fail(job, "网易云播放器后台没有保持连接，请稍后再试。"); return;
     }
 
     auto wait_for_track = [&](double seconds) {
-      const double until = xc::monotonic() + seconds;
-      while (current(job.revision) && xc::monotonic() < until) {
-        auto idle = mpv_command({"get_property", "idle-active"}, socket_path_);
-        if (mpv_ok(idle) && !idle.value("data", true)) return true;
+      const double until = xc::Monotonic() + seconds;
+      while (Current(job.revision) && xc::Monotonic() < until) {
+        auto idle = MpvCommand({"get_property", "idle-active"}, socket_path_);
+        if (MpvOk(idle) && !idle.value("data", true)) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }
       return false;
@@ -365,29 +365,29 @@ void MusicNode::execute(const Job &job) {
     // Keep the daemon subscribed, then retry once without requiring a second
     // user utterance. MPV state, not the CLI exit code, decides whether it worked.
     bool loaded = wait_for_track(6.0);
-    if (!loaded && current(job.revision)) {
-      log_manager_.logger()->warn("ncm-cli did not load the track on first attempt; retrying once");
-      if (!play.output.empty()) log_manager_.logger()->warn("First ncm-cli play output: {:.400}", play.output);
-      play = cli(play_args, job.revision);
-      if (!current(job.revision)) { mpv_command({"stop"}, socket_path_); return; }
+    if (!loaded && Current(job.revision)) {
+      LOG_WARN("ncm-cli did not load the track on first attempt; retrying once");
+      if (!play.output.empty()) LOG_WARN("First ncm-cli play output: {:.400}", play.output);
+      play = Cli(play_args, job.revision);
+      if (!Current(job.revision)) { MpvCommand({"stop"}, socket_path_); return; }
       loaded = wait_for_track(12.0);
     }
     if (!loaded) {
       if (!play.ok || (play.data.is_object() && !play.data.value("success", false)))
-        log_manager_.logger()->warn("ncm-cli play failed: {:.400}", play.output);
-      mpv_command({"stop"}, socket_path_);
-      fail(job, "网易云后台两次都没有加载出歌曲，请稍后再试。"); return;
+        LOG_WARN("ncm-cli play failed: {:.400}", play.output);
+      MpvCommand({"stop"}, socket_path_);
+      Fail(job, "网易云后台两次都没有加载出歌曲，请稍后再试。"); return;
     }
     { std::lock_guard<std::mutex> lock(state_mutex_);
       state_message_.title = selected->value("name", std::string{});
     }
-    mpv_command({"set_property", "audio-device", audio_device_}, socket_path_);
+    MpvCommand({"set_property", "audio-device", audio_device_}, socket_path_);
     {
-      auto idle = mpv_command({"get_property", "idle-active"}, socket_path_);
-      if (mpv_ok(idle) && !idle.value("data", true)) {
+      auto idle = MpvCommand({"get_property", "idle-active"}, socket_path_);
+      if (MpvOk(idle) && !idle.value("data", true)) {
         // Hold the first track while preparing the queue so short tracks cannot
         // end before their follow-up entries have been added.
-        mpv_command({"set_property", "pause", true}, socket_path_);
+        MpvCommand({"set_property", "pause", true}, socket_path_);
         // `play --song` replaces the ncm-cli queue with just the selected track.
         // Append playable search results, then loop the complete queue forever.
         bool after_selected = false;
@@ -404,72 +404,72 @@ void MusicNode::execute(const Job &job) {
           const auto encrypted_id = song.value("id", std::string{});
           if (encrypted_id.empty() || encrypted_id == selected->value("id", std::string{})) continue;
           ++attempts;
-          auto added = cli({"queue", "add", "--encrypted-id", encrypted_id,
+          auto added = Cli({"queue", "add", "--encrypted-id", encrypted_id,
             "--original-id", song["originalId"].dump(), "--output", "json"}, job.revision);
-          if (!current(job.revision)) return;
+          if (!Current(job.revision)) return;
           if (added.ok && added.data.is_object() && added.data.value("success", false)) {
             ++queued;
           } else {
-            log_manager_.logger()->warn("Could not queue next search result ({}): {:.240}",
+            LOG_WARN("Could not queue next search result ({}): {:.240}",
               song.value("name", std::string{}), added.output);
           }
         }
-        auto loop = mpv_command({"set_property", "loop-playlist", "inf"}, socket_path_);
-        if (!mpv_ok(loop)) {
-          log_manager_.logger()->warn("Could not enable continuous playlist loop");
-          loop = mpv_command({"set_property", "loop-file", "inf"}, socket_path_);
+        auto loop = MpvCommand({"set_property", "loop-playlist", "inf"}, socket_path_);
+        if (!MpvOk(loop)) {
+          LOG_WARN("Could not enable continuous playlist loop");
+          loop = MpvCommand({"set_property", "loop-file", "inf"}, socket_path_);
         }
-        if (!mpv_ok(loop)) {
-          mpv_command({"stop"}, socket_path_);
-          fail(job, "网易云播放器无法保持连续播放，请稍后再试。"); return;
+        if (!MpvOk(loop)) {
+          MpvCommand({"stop"}, socket_path_);
+          Fail(job, "网易云播放器无法保持连续播放，请稍后再试。"); return;
         }
-        if (!voice_playing_ && !mpv_ok(mpv_command({"set_property", "pause", false}, socket_path_))) {
-          mpv_command({"stop"}, socket_path_);
-          fail(job, "音乐已加载，但无法从扬声器开始播放。"); return;
+        if (!voice_playing_ && !MpvOk(MpvCommand({"set_property", "pause", false}, socket_path_))) {
+          MpvCommand({"stop"}, socket_path_);
+          Fail(job, "音乐已加载，但无法从扬声器开始播放。"); return;
         }
         bool playing = false;
-        const double verify_until = xc::monotonic() + 2.0;
-        while (current(job.revision) && xc::monotonic() < verify_until) {
-          auto active = mpv_command({"get_property", "idle-active"}, socket_path_);
-          auto paused = mpv_command({"get_property", "pause"}, socket_path_);
-          if (mpv_ok(active) && mpv_ok(paused) && !active.value("data", true) &&
+        const double verify_until = xc::Monotonic() + 2.0;
+        while (Current(job.revision) && xc::Monotonic() < verify_until) {
+          auto active = MpvCommand({"get_property", "idle-active"}, socket_path_);
+          auto paused = MpvCommand({"get_property", "pause"}, socket_path_);
+          if (MpvOk(active) && MpvOk(paused) && !active.value("data", true) &&
               !paused.value("data", true)) { playing = true; break; }
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         if (!playing) {
-          mpv_command({"stop"}, socket_path_);
-          fail(job, "音乐没有从扬声器真正播放出来，请稍后再试。"); return;
+          MpvCommand({"stop"}, socket_path_);
+          Fail(job, "音乐没有从扬声器真正播放出来，请稍后再试。"); return;
         }
-        set_state(State::Playing,{},job.request_id);
-        log_manager_.logger()->info("MusicNode playback started continuously: {}; queued {} follow-up tracks",
+        SetState(State::Playing,{},job.request_id);
+        LOG_INFO("MusicNode playback started continuously: {}; queued {} follow-up tracks",
           selected->value("name", std::string{}), queued);
         return;
       }
     }
-    fail(job, "音乐加载后播放器状态丢失，请稍后再试。");
+    Fail(job, "音乐加载后播放器状态丢失，请稍后再试。");
   } else if (job.intent == "music_resume") {
-    if (!wait_for_speech(job.revision)) return;
-    auto idle = mpv_command({"get_property", "idle-active"}, socket_path_);
-    if (!mpv_ok(idle) || idle.value("data", true)) { fail(job, "还没有可继续播放的音乐，请先点歌。"); return; }
-    if (!mpv_ok(mpv_command({"set_property", "pause", false}, socket_path_)))
-      fail(job, "音乐暂时无法继续播放。");
-    else set_state(State::Playing,{},job.request_id);
+    if (!WaitForSpeech(job.revision)) return;
+    auto idle = MpvCommand({"get_property", "idle-active"}, socket_path_);
+    if (!MpvOk(idle) || idle.value("data", true)) { Fail(job, "还没有可继续播放的音乐，请先点歌。"); return; }
+    if (!MpvOk(MpvCommand({"set_property", "pause", false}, socket_path_)))
+      Fail(job, "音乐暂时无法继续播放。");
+    else SetState(State::Playing,{},job.request_id);
   } else if (job.intent == "music_pause") {
-    set_state(State::Paused,{},job.request_id);
+    SetState(State::Paused,{},job.request_id);
   } else if (job.intent == "music_stop") {
-    mpv_command({"stop"}, socket_path_);
-    set_state(State::Stopped,{},job.request_id);
+    MpvCommand({"stop"}, socket_path_);
+    SetState(State::Stopped,{},job.request_id);
   } else if (job.intent == "music_next" || job.intent == "music_previous") {
-    if (!wait_for_speech(job.revision)) return;
-    auto result = cli({job.intent == "music_next" ? "next" : "prev"}, job.revision);
-    if (!current(job.revision)) return;
-    if (!result.ok || !result.data.is_object() || !result.data.value("success", false)) fail(job, "没有可切换的歌曲，请点一首新的歌。");
-    else if (mpv_ok(mpv_command({"set_property", "pause", false}, socket_path_)))set_state(State::Playing,{},job.request_id);
-    else fail(job,"音乐暂时无法切换播放。");
+    if (!WaitForSpeech(job.revision)) return;
+    auto result = Cli({job.intent == "music_next" ? "next" : "prev"}, job.revision);
+    if (!Current(job.revision)) return;
+    if (!result.ok || !result.data.is_object() || !result.data.value("success", false)) Fail(job, "没有可切换的歌曲，请点一首新的歌。");
+    else if (MpvOk(MpvCommand({"set_property", "pause", false}, socket_path_)))SetState(State::Playing,{},job.request_id);
+    else Fail(job,"音乐暂时无法切换播放。");
   }
 }
 
-void MusicNode::work() {
+void MusicNode::Work() {
   while (!stop_) {
     Job job;
     { std::unique_lock<std::mutex> lock(jobs_mutex_);
@@ -477,12 +477,12 @@ void MusicNode::work() {
       if (stop_) return;
       job = std::move(jobs_.front()); jobs_.pop_front();
     }
-    if (!current(job.revision)) continue;
+    if (!Current(job.revision)) continue;
     busy_ = true;
-    try { execute(job); }
+    try { Execute(job); }
     catch (const std::exception &error) {
-      log_manager_.logger()->error("MusicNode command failed: {}", error.what());
-      fail(job, "音乐服务暂时出了点问题，请再试一次。");
+      LOG_ERROR("MusicNode command failed: {}", error.what());
+      Fail(job, "音乐服务暂时出了点问题，请再试一次。");
     }
     busy_ = false;
   }

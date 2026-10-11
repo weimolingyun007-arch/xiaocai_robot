@@ -5,7 +5,7 @@
 
 namespace {
 
-std::filesystem::path default_config_path() {
+std::filesystem::path DefaultConfigPath() {
   if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
     return std::filesystem::path(root) / "speech_input_node" / "biz_config.toml";
   }
@@ -18,8 +18,8 @@ std::filesystem::path default_config_path() {
 
 SpeechInputConfig::SpeechInputConfig()
     : xc::NodeConfigBase(
-          default_config_path()) {
-  const auto *section = document()["speech_input"].as_table();
+          DefaultConfigPath()) {
+  const auto *section = Document()["speech_input"].as_table();
   if (!section) return;
   if (auto value = (*section)["wake_model_path"].value<std::string>()) settings_.wake_model_path = *value;
   if (auto value = (*section)["sense_model_path"].value<std::string>()) settings_.sense_model_path = *value;

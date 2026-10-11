@@ -13,7 +13,7 @@ struct DialogueSettings {
 class DialogueConfig : public xc::NodeConfigBase {
 public:
   DialogueConfig();
-  const DialogueSettings &settings() const noexcept { return settings_; }
+  const DialogueSettings &Settings() const noexcept { return settings_; }
 
 private:
   DialogueSettings settings_;

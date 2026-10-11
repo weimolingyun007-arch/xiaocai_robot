@@ -12,10 +12,10 @@ struct IntentResult {
 
 class IntentRules {
 public:
-  IntentResult classify(std::string text) const;
+  IntentResult Classify(std::string text) const;
 
 private:
-  static bool is_compound_request(const std::string &text);
-  static int chinese_number(const std::string &text);
-  static bool parse_music_intent(const std::string &text, IntentResult &result);
+  static bool IsCompoundRequest(const std::string &text);
+  static int ChineseNumber(const std::string &text);
+  static bool ParseMusicIntent(const std::string &text, IntentResult &result);
 };

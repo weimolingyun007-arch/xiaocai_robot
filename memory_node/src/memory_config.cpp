@@ -5,7 +5,7 @@
 
 namespace {
 
-std::filesystem::path default_config_path() {
+std::filesystem::path DefaultConfigPath() {
   if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
     return std::filesystem::path(root) / "memory_node" / "biz_config.toml";
   }
@@ -18,8 +18,8 @@ std::filesystem::path default_config_path() {
 
 MemoryConfig::MemoryConfig()
     : xc::NodeConfigBase(
-          default_config_path()) {
-  const auto *section = document()["memory"].as_table();
+          DefaultConfigPath()) {
+  const auto *section = Document()["memory"].as_table();
   if (!section) return;
   if (auto value = (*section)["db_path"].value<std::string>()) settings_.db_path = *value;
 }

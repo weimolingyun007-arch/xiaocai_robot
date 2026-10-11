@@ -22,14 +22,14 @@ mkdir -p "$log_dir"
 bash bringup/scripts/stop_all_node.sh
 
 pids=()
-cleanup() {
+Cleanup() {
   for pid in "${pids[@]}"; do
     kill -TERM "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
   rm -f "$pid_file"
 }
-trap cleanup EXIT
+trap Cleanup EXIT
 trap 'exit 0' INT TERM
 
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"

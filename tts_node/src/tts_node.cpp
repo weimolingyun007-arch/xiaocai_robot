@@ -10,8 +10,8 @@
 
 TtsNode::TtsNode()
     : Node("tts_node"), tts_config_(),
-      log_manager_("tts_node", tts_config_.logging()) {
-    const auto &settings = tts_config_.settings();
+      log_manager_("tts_node", tts_config_.Logging()) {
+    const auto &settings = tts_config_.Settings();
     std::string dir=declare_parameter<std::string>("model_dir",settings.model_dir);
     speaker_=declare_parameter<int>("speaker_id",static_cast<int>(settings.speaker_id));
     model_=dir+"/model.onnx";lexicon_=dir+"/lexicon.txt";tokens_=dir+"/tokens.txt";
@@ -24,7 +24,7 @@ TtsNode::TtsNode()
     std::filesystem::create_directories("/tmp/xiaocai_tts");
     InitPublishers();
     InitSubscribers();
-    log_manager_.logger()->info("sherpa Chinese TTS loaded");
+    LOG_INFO("sherpa Chinese TTS loaded");
   }
 
 void TtsNode::InitPublishers() {
@@ -32,19 +32,19 @@ void TtsNode::InitPublishers() {
   }
 
 void TtsNode::InitSubscribers() {
-    sub_=create_subscription<std_msgs::msg::String>("/xiaocai_robot/tts/text",10,[this](std_msgs::msg::String::SharedPtr m){synthesize(m->data);});
+    sub_=create_subscription<std_msgs::msg::String>("/xiaocai_robot/tts/text",10,[this](std_msgs::msg::String::SharedPtr m){Synthesize(m->data);});
   }
 
 TtsNode::~TtsNode() {if(tts_)SherpaOnnxDestroyOfflineTts(tts_);}
 
-void TtsNode::synthesize(std::string text) {
-    text=xc::utf8_prefix(xc::trim(text),400);if(text.empty())return;
+void TtsNode::Synthesize(std::string text) {
+    text=xc::Utf8Prefix(xc::Trim(text),400);if(text.empty())return;
     SherpaOnnxGenerationConfig generation_config{};
     generation_config.sid=speaker_;
     generation_config.speed=0.95f;
     auto audio=SherpaOnnxOfflineTtsGenerateWithConfig(
       tts_,text.c_str(),&generation_config,nullptr,nullptr);
-    if(!audio||audio->n<=0){log_manager_.logger()->error("TTS generation failed");return;}
+    if(!audio||audio->n<=0){LOG_ERROR("TTS generation failed");return;}
     auto path="/tmp/xiaocai_tts/"+std::to_string(++id_)+".wav";
     std::vector<float> samples(audio->samples,audio->samples+audio->n);
     float peak=0.0f;
@@ -59,5 +59,5 @@ void TtsNode::synthesize(std::string text) {
       xiaocai_msgs::msg::AudioPlay play;
       play.path=path;
       play_->publish(play);
-    } else log_manager_.logger()->error("Cannot write TTS wave");
+    } else LOG_ERROR("Cannot write TTS wave");
   }

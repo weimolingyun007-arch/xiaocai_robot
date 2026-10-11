@@ -21,15 +21,20 @@ struct LogManagerConfig {
 
 // Creates a node-specific spdlog logger from already loaded configuration.
 // The manager owns the logger; nodes should keep one manager as a member and
-// write through logger().
+// write through Logger().
 class LogManager {
 public:
   LogManager(std::string logger_name, LogManagerConfig config);
 
-  std::shared_ptr<spdlog::logger> logger() const noexcept { return logger_; }
+  std::shared_ptr<spdlog::logger> Logger() const noexcept { return logger_; }
 
 private:
   std::shared_ptr<spdlog::logger> logger_;
 };
 
 }  // namespace xc
+
+// Node methods use these macros to write through their `log_manager_` member.
+#define LOG_INFO(...) log_manager_.Logger()->info(__VA_ARGS__)
+#define LOG_WARN(...) log_manager_.Logger()->warn(__VA_ARGS__)
+#define LOG_ERROR(...) log_manager_.Logger()->error(__VA_ARGS__)

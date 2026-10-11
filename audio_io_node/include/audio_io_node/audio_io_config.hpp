@@ -17,7 +17,7 @@ struct AudioIoSettings {
 class AudioIoConfig : public xc::NodeConfigBase {
 public:
   AudioIoConfig();
-  const AudioIoSettings &settings() const noexcept { return settings_; }
+  const AudioIoSettings &Settings() const noexcept { return settings_; }
 
 private:
   AudioIoSettings settings_;
