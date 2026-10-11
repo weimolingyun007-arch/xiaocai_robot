@@ -11,7 +11,8 @@ namespace xiaocai_robot {
 
 TtsNode::TtsNode()
     : Node("tts_node"), tts_config_(),
-      log_manager_("tts_node", tts_config_.Logging()) {
+      log_manager_("tts_node", tts_config_.Logging()), tts_(nullptr),
+      speaker_(2), id_(0) {
   const auto &settings = tts_config_.Settings();
   std::string dir =
       declare_parameter<std::string>("model_dir", settings.model_dir);
@@ -41,6 +42,11 @@ TtsNode::TtsNode()
   LOG_INFO("sherpa Chinese TTS loaded");
 }
 
+TtsNode::~TtsNode() {
+  if (tts_)
+    SherpaOnnxDestroyOfflineTts(tts_);
+}
+
 void TtsNode::InitPublishers() {
   int initialized_count = 0;
   play_publisher_ = create_publisher<xiaocai_msgs::msg::AudioPlay>(
@@ -61,18 +67,10 @@ void TtsNode::InitSubscribers() {
 }
 
 void TtsNode::OnTextCallback(const std_msgs::msg::String::SharedPtr message) {
-  Synthesize(message->data);
-}
-
-TtsNode::~TtsNode() {
-  if (tts_)
-    SherpaOnnxDestroyOfflineTts(tts_);
-}
-
-void TtsNode::Synthesize(std::string text) {
-  text = Utf8Prefix(Trim(text), 400);
+  const auto text = Utf8Prefix(Trim(message->data), 400);
   if (text.empty())
     return;
+
   SherpaOnnxGenerationConfig generation_config{};
   generation_config.sid = speaker_;
   generation_config.speed = 0.95f;
@@ -82,26 +80,29 @@ void TtsNode::Synthesize(std::string text) {
     LOG_ERROR("TTS generation failed");
     return;
   }
-  auto path = "/tmp/xiaocai_tts/" + std::to_string(++id_) + ".wav";
+
+  const auto path = "/tmp/xiaocai_tts/" + std::to_string(++id_) + ".wav";
   std::vector<float> samples(audio->samples, audio->samples + audio->n);
   float peak = 0.0f;
   for (float sample : samples)
     peak = std::max(peak, std::abs(sample));
   if (peak > 0.0f) {
-    float gain = std::min(3.0f, 0.8f / peak);
+    const float gain = std::min(3.0f, 0.8f / peak);
     for (float &sample : samples)
       sample = std::clamp(sample * gain, -0.95f, 0.95f);
   }
-  int ok = SherpaOnnxWriteWave(samples.data(), audio->n, audio->sample_rate,
-                               path.c_str());
+
+  const int ok = SherpaOnnxWriteWave(samples.data(), audio->n,
+                                     audio->sample_rate, path.c_str());
   SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
-  if (ok) {
-    xiaocai_msgs::msg::AudioPlay play;
-    play.timestamp = now();
-    play.path = path;
-    play_publisher_->publish(play);
-  } else
+  if (!ok) {
     LOG_ERROR("Cannot write TTS wave");
+    return;
+  }
+  xiaocai_msgs::msg::AudioPlay play;
+  play.timestamp = now();
+  play.path = path;
+  play_publisher_->publish(play);
 }
 
 } // namespace xiaocai_robot

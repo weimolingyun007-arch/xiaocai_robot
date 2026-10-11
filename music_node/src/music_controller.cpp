@@ -91,7 +91,9 @@ MusicController::MusicController(MusicSettings settings,
                                  SpeechCallback speech_callback)
     : settings_(std::move(settings)), log_manager_(log_manager),
       status_callback_(std::move(status_callback)),
-      speech_callback_(std::move(speech_callback)) {
+      speech_callback_(std::move(speech_callback)), stop_(false),
+      silenced_(false), voice_playing_(false), busy_(false),
+      last_voice_at_(0.0), revision_(0), backend_fd_(-1) {
   SetPlaybackStatus(State::Stopped);
   worker_ = std::thread([this] { WorkerLoop(); });
 }

@@ -1,28 +1,26 @@
 #include "dialogue_node/dialogue_node.hpp"
-#include "common/common.hpp"
-#include "defination/intent_type.hpp"
-#include <curl/curl.h>
-#include <filesystem>
-#include <map>
-#include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/bool.hpp>
+
+#include <chrono>
+#include <cstdint>
+#include <exception>
+#include <stdexcept>
+#include <utility>
 
 namespace xiaocai_robot {
 
 DialogueNode::DialogueNode()
     : Node("dialogue_node"), dialogue_config_(),
-      log_manager_("dialogue_node", dialogue_config_.Logging()) {
-  const auto &settings = dialogue_config_.Settings();
-  api_url_ = declare_parameter<std::string>("api_url", settings.api_url);
-  model_ = declare_parameter<std::string>("model", settings.model);
-  curl_global_init(CURL_GLOBAL_DEFAULT);
+      log_manager_("dialogue_node", dialogue_config_.Logging()),
+      dialogue_controller_() {
   InitPublishers();
   InitSubscribers();
   InitClients();
+  InitController();
   InitTimers();
   PublishState(common::RobotState::Idle);
-  worker_ = std::thread([this] { ChatWorker(); });
 }
+
+DialogueNode::~DialogueNode() { dialogue_controller_.reset(); }
 
 void DialogueNode::InitPublishers() {
   int initialized_count = 0;
@@ -103,19 +101,42 @@ void DialogueNode::InitClients() {
       "/xiaocai_robot/audio/get_volume");
 }
 
-void DialogueNode::InitTimers() {
-  timer_ = create_wall_timer(std::chrono::seconds(3), [this] {
-    if (!loaded_)
-      Request(common::MemoryOperation::GetQuiet);
-  });
+void DialogueNode::InitController() {
+  auto settings = dialogue_config_.Settings();
+  settings.api_url =
+      declare_parameter<std::string>("api_url", settings.api_url);
+  settings.model = declare_parameter<std::string>("model", settings.model);
+
+  DialogueCallbacks callbacks;
+  callbacks.speak = [this](const std::string &text) { PublishSpeech(text); };
+  callbacks.publish_state = [this](common::RobotState state) {
+    PublishState(state);
+  };
+  callbacks.publish_memory_command =
+      [this](const DialogueMemoryCommand &command) {
+        PublishMemoryCommand(command);
+      };
+  callbacks.publish_volume_command = [this](common::VolumeAction action,
+                                            int percent) {
+    PublishVolumeCommand(action, percent);
+  };
+  callbacks.publish_music_command = [this](common::MusicAction action,
+                                           const std::string &query,
+                                           std::uint64_t request_id) {
+    PublishMusicCommand(action, query, request_id);
+  };
+  callbacks.request_volume =
+      [this](DialogueCallbacks::VolumeResponseCallback callback) {
+        ClientVolume(std::move(callback));
+      };
+  dialogue_controller_ = std::make_unique<DialogueController>(
+      std::move(settings), log_manager_, std::move(callbacks));
 }
 
-DialogueNode::~DialogueNode() {
-  stopping_ = true;
-  tool_cv_.notify_all();
-  if (worker_.joinable())
-    worker_.join();
-  curl_global_cleanup();
+void DialogueNode::InitTimers() {
+  timer_ = create_wall_timer(std::chrono::seconds(3), [this] {
+    dialogue_controller_->HandleTimerTick();
+  });
 }
 
 void DialogueNode::PublishState(common::RobotState state) {
@@ -125,179 +146,115 @@ void DialogueNode::PublishState(common::RobotState state) {
   state_publisher_->publish(message);
 }
 
-void DialogueNode::Speak(const std::string &text) {
-  if (hushed_ || stopping_)
-    return;
-  PublishState(common::RobotState::Thinking);
-  tts_publisher_->publish(Str(text));
+void DialogueNode::PublishSpeech(const std::string &text) {
+  std_msgs::msg::String message;
+  message.data = text;
+  tts_publisher_->publish(message);
 }
 
-void DialogueNode::Request(common::MemoryOperation operation,
-                           const std::string &content, int32_t delay_seconds,
-                           bool enabled) {
-  std::string id = std::to_string(++next_id_);
-  pending_[id] = operation;
+void DialogueNode::PublishMemoryCommand(const DialogueMemoryCommand &command) {
   xiaocai_msgs::msg::MemoryCommand message;
   message.timestamp = now();
-  message.operation = static_cast<std::uint8_t>(operation);
-  message.request_id = id;
-  message.content = content;
-  message.delay_seconds = delay_seconds;
-  message.enabled = enabled;
+  message.operation = static_cast<std::uint8_t>(command.operation);
+  message.request_id = command.request_id;
+  message.content = command.content;
+  message.delay_seconds = command.delay_seconds;
+  message.enabled = command.enabled;
   memory_publisher_->publish(message);
 }
 
+void DialogueNode::PublishVolumeCommand(common::VolumeAction action,
+                                        int percent) {
+  xiaocai_msgs::msg::VolumeCommand message;
+  message.timestamp = now();
+  message.action = static_cast<std::uint8_t>(action);
+  message.percent = percent;
+  volume_command_publisher_->publish(message);
+}
+
+void DialogueNode::PublishMusicCommand(common::MusicAction action,
+                                       const std::string &query,
+                                       std::uint64_t request_id) {
+  xiaocai_msgs::msg::MusicCommand message;
+  message.timestamp = now();
+  message.action = static_cast<std::uint8_t>(action);
+  message.query = query;
+  message.request_id = request_id;
+  music_command_publisher_->publish(message);
+}
+
+void DialogueNode::ClientVolume(
+    DialogueCallbacks::VolumeResponseCallback callback) {
+  if (!volume_get_client_->service_is_ready()) {
+    callback({false, 0, "volume service unavailable"});
+    return;
+  }
+  auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
+  request->timestamp = now();
+  volume_get_client_->async_send_request(
+      request,
+      [callback = std::move(callback)](
+          rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedFuture future) {
+        try {
+          const auto response = future.get();
+          callback({true, response->percent, {}});
+        } catch (const std::exception &error) {
+          callback({false, 0, error.what()});
+        }
+      });
+}
+
 void DialogueNode::OnIntentCallback(const xiaocai_msgs::msg::Intent &message) {
-  using Intent = common::IntentType;
-  const auto intent = static_cast<Intent>(message.type);
-  if (hushed_)
-    return;
-  if (!common::IsKnownIntent(intent)) {
-    LOG_WARN("Ignoring unknown intent code: {}", static_cast<unsigned>(intent));
-    return;
-  }
-  PublishState(common::RobotState::Thinking);
-  if (intent == Intent::VolumeGet) {
-    if (!volume_get_client_->service_is_ready()) {
-      Speak("音量查询服务暂时不可用。");
-      return;
-    }
-    auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
-    request->timestamp = now();
-    volume_get_client_->async_send_request(
-        request,
-        [this](
-            rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedFuture future) {
-          auto response = future.get();
-          Speak("当前音量是百分之" + std::to_string(response->percent) + "。");
-        });
-  } else if (intent == Intent::QuietOn) {
-    quiet_ = true;
-    Request(common::MemoryOperation::SetQuiet, {}, 0, true);
-    Speak("好的，我会安静地陪着你。需要我时叫小蔡。");
-  } else if (intent == Intent::QuietOff) {
-    quiet_ = false;
-    Request(common::MemoryOperation::SetQuiet, {}, 0, false);
-    Speak("好的，我在。");
-    for (auto &s : held_)
-      Speak("提醒你，" + s);
-    held_.clear();
-  } else if (intent == Intent::ReminderClarify) {
-    Speak("请说清楚多久后提醒你，以及要提醒什么。比如十分钟后提醒我喝水。");
-  } else if (intent == Intent::Chat) {
-    EnqueueChat(message.text);
-  }
+  dialogue_controller_->HandleIntent(
+      static_cast<common::IntentType>(message.type), message.text);
 }
 
 void DialogueNode::OnMemoryResultCallback(
     const xiaocai_msgs::msg::MemoryResult &message) {
-  if (message.request_id.rfind("tool-", 0) == 0) {
-    std::lock_guard<std::mutex> lock(tool_mutex_);
-    auto entry = tool_results_.find(message.request_id);
-    if (entry != tool_results_.end())
-      entry->second = {
-          {"ok", message.ok},           {"error", message.error},
-          {"facts", message.facts},     {"content", message.content},
-          {"deleted", message.deleted}, {"enabled", message.enabled}};
-    tool_cv_.notify_all();
-    return;
-  }
-  common::MemoryOperation operation;
-  if (message.request_id.rfind("intent-", 0) == 0) {
-    operation = static_cast<common::MemoryOperation>(message.operation);
-  } else {
-    auto it = pending_.find(message.request_id);
-    if (it == pending_.end())
-      return;
-    operation = it->second;
-    pending_.erase(it);
-  }
-  if (operation == common::MemoryOperation::GetQuiet) {
-    if (message.ok) {
-      quiet_ = message.enabled;
-      loaded_ = true;
-    }
-    return;
-  }
-  if (operation == common::MemoryOperation::SetQuiet)
-    return;
-  if (!message.ok) {
-    Speak("这件事刚才没保存成功，请再说一次。");
-    return;
-  }
-  if (operation == common::MemoryOperation::SaveFact)
-    Speak("好，我记住了。");
-  else if (operation == common::MemoryOperation::ForgetFact)
-    Speak(message.deleted > 0 ? "已经忘记了。" : "我没有找到这条记忆。");
-  else if (operation == common::MemoryOperation::ListFacts) {
-    std::string facts;
-    for (const auto &fact : message.facts) {
-      if (!facts.empty())
-        facts += "；";
-      facts += fact;
-    }
-    Speak(facts.empty() ? "你还没有让我记住什么。" : "我记得：" + facts);
-  } else if (operation == common::MemoryOperation::AddReminder)
-    Speak("好的，我会提醒你" + message.content + "。");
+  DialogueMemoryResult result;
+  result.request_id = message.request_id;
+  result.operation = static_cast<common::MemoryOperation>(message.operation);
+  result.ok = message.ok;
+  result.error = message.error;
+  result.facts = message.facts;
+  result.content = message.content;
+  result.deleted = message.deleted;
+  result.enabled = message.enabled;
+  dialogue_controller_->HandleMemoryResult(result);
 }
 
 void DialogueNode::OnReminderDueCallback(
     const xiaocai_msgs::msg::Reminder &message) {
-  if (message.content.empty())
-    return;
-  if (quiet_)
-    held_.push_back(message.content);
-  else
-    Speak("提醒你，" + message.content);
+  dialogue_controller_->HandleReminderDue(message.content);
 }
 
 void DialogueNode::OnAudioPlayingCallback(const std_msgs::msg::Bool &message) {
-  PublishState(message.data ? common::RobotState::Speaking
-               : quiet_     ? common::RobotState::Quiet
-                            : common::RobotState::Idle);
+  dialogue_controller_->HandleAudioPlaying(message.data);
 }
 
 void DialogueNode::OnSpeechAwakeCallback(const std_msgs::msg::Bool &message) {
-  if (message.data) {
-    hushed_ = false;
-    ++generation_;
-    tool_cv_.notify_all();
-  }
-  PublishState(message.data ? common::RobotState::Listening
-               : quiet_     ? common::RobotState::Quiet
-                            : common::RobotState::Idle);
+  dialogue_controller_->HandleSpeechAwake(message.data);
 }
 
 void DialogueNode::OnVolumeStateCallback(const std_msgs::msg::Int32 &message) {
-  {
-    std::lock_guard<std::mutex> lock(tool_mutex_);
-    if (tool_volume_pending_) {
-      tool_volume_result_ = {{"ok", true}, {"percent", message.data}};
-      tool_cv_.notify_all();
-      return;
-    }
-  }
-  if (message.data > 0)
-    Speak("音量调到百分之" + std::to_string(message.data) + "。");
-  else
-    PublishState(common::RobotState::Muted);
+  dialogue_controller_->HandleVolumeState(message.data);
 }
 
 void DialogueNode::OnMusicStateCallback(
     const xiaocai_msgs::msg::MusicState &message) {
-  std::lock_guard<std::mutex> lock(tool_mutex_);
-  music_state_ = message;
-  ++music_sequence_;
-  tool_cv_.notify_all();
+  DialogueMusicStatus status;
+  status.state = static_cast<common::MusicState>(message.state);
+  status.title = message.title;
+  status.position_seconds = message.position_seconds;
+  status.duration_seconds = message.duration_seconds;
+  status.error = message.error;
+  status.request_id = message.request_id;
+  dialogue_controller_->HandleMusicState(status);
 }
 
 void DialogueNode::OnAudioPlayCallback(
     const xiaocai_msgs::msg::AudioPlay &message) {
-  if (message.path.empty()) {
-    hushed_ = true;
-    ++generation_;
-    tool_cv_.notify_all();
-  }
+  dialogue_controller_->HandleAudioPlay(message.path);
 }
 
 } // namespace xiaocai_robot

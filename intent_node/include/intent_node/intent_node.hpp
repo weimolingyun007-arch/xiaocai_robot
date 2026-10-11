@@ -27,7 +27,7 @@ private:
   IntentConfig intent_config_;
   LogManager log_manager_;
   IntentRules intent_rules_;
-  std::uint64_t next_memory_request_id_ = 0;
+  std::uint64_t next_memory_request_id_;
   rclcpp::Publisher<xiaocai_msgs::msg::Intent>::SharedPtr intent_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MusicCommand>::SharedPtr
       music_command_publisher_;

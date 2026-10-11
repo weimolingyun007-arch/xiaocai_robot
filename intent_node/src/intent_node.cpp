@@ -57,7 +57,8 @@ const char *IntentResultName(const IntentResult &result) {
 
 IntentNode::IntentNode()
     : Node("intent_node"), intent_config_(),
-      log_manager_("intent_node", intent_config_.Logging()) {
+      log_manager_("intent_node", intent_config_.Logging()),
+      next_memory_request_id_(0) {
   InitPublishers();
   InitSubscribers();
 }

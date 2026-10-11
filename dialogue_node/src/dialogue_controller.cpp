@@ -1,19 +1,37 @@
+#include "dialogue_node/dialogue_controller.hpp"
+#include "defination/intent_type.hpp"
 #include "defination/music_action.hpp"
 #include "defination/music_state.hpp"
+#include "defination/robot_state.hpp"
 #include "defination/volume_action.hpp"
-#include "dialogue_node/dialogue_node.hpp"
+
+#include <chrono>
+#include <cstdlib>
 #include <ctime>
-#include <future>
+#include <curl/curl.h>
+#include <functional>
+#include <memory>
 #include <set>
 #include <stdexcept>
+#include <utility>
 
 namespace xiaocai_robot {
 
-using namespace std::chrono_literals;
+using json = nlohmann::json;
+using std::chrono_literals::operator""ms;
+using std::chrono_literals::operator""s;
 
 namespace {
 json Failure(const std::string &error) {
   return {{"ok", false}, {"error", error}};
+}
+std::string Utf8Prefix(const std::string &value, std::size_t limit) {
+  if (value.size() <= limit)
+    return value;
+  std::size_t end = limit;
+  while (end > 0 && (static_cast<unsigned char>(value[end]) & 0xc0) == 0x80)
+    --end;
+  return value.substr(0, end);
 }
 size_t AppendResponse(char *ptr, size_t size, size_t count, void *data) {
   auto &out = *static_cast<std::string *>(data);
@@ -66,7 +84,231 @@ int IntArg(const json &args, const char *key, int low, int high) {
 }
 } // namespace
 
-json DialogueNode::ToolDefinitions() {
+DialogueController::DialogueController(DialogueSettings settings,
+                                       LogManager &log_manager,
+                                       DialogueCallbacks callbacks)
+    : settings_(std::move(settings)), log_manager_(log_manager),
+      callbacks_(std::move(callbacks)),
+      alive_(std::make_shared<std::atomic<bool>>(true)), quiet_(false),
+      loaded_(false), next_memory_request_id_(0), stopping_(false),
+      hushed_(false), generation_(0), tool_id_(0), tool_volume_pending_(false),
+      tool_volume_result_(nullptr), music_sequence_(0), music_state_() {
+  const auto result = curl_global_init(CURL_GLOBAL_DEFAULT);
+  if (result != CURLE_OK)
+    throw std::runtime_error("curl global initialization failed");
+  worker_ = std::thread([this] { WorkerLoop(); });
+}
+
+DialogueController::~DialogueController() {
+  alive_->store(false);
+  stopping_.store(true);
+  tool_cv_.notify_all();
+  if (worker_.joinable())
+    worker_.join();
+  curl_global_cleanup();
+}
+
+void DialogueController::HandleIntent(common::IntentType type,
+                                      const std::string &text) {
+  if (hushed_.load())
+    return;
+  if (!common::IsKnownIntent(type)) {
+    LOG_WARN("Ignoring unknown intent code: {}", static_cast<unsigned>(type));
+    return;
+  }
+
+  if (callbacks_.publish_state)
+    callbacks_.publish_state(common::RobotState::Thinking);
+  switch (type) {
+  case common::IntentType::VolumeGet: {
+    if (!callbacks_.request_volume) {
+      Speak("音量查询服务暂时不可用。");
+      return;
+    }
+    auto speak = callbacks_.speak;
+    std::weak_ptr<std::atomic<bool>> alive = alive_;
+    callbacks_.request_volume(
+        [alive, speak = std::move(speak)](DialogueVolumeResult result) {
+          const auto active = alive.lock();
+          if (!active || !active->load() || !speak)
+            return;
+          speak(result.ok
+                    ? "当前音量是百分之" + std::to_string(result.percent) + "。"
+                    : "音量查询服务暂时不可用。");
+        });
+    return;
+  }
+  case common::IntentType::QuietOn:
+    quiet_.store(true);
+    RequestMemory(common::MemoryOperation::SetQuiet, {}, 0, true);
+    Speak("好的，我会安静地陪着你。需要我时叫小蔡。");
+    return;
+  case common::IntentType::QuietOff:
+    quiet_.store(false);
+    RequestMemory(common::MemoryOperation::SetQuiet, {}, 0, false);
+    Speak("好的，我在。");
+    for (const auto &reminder : held_)
+      Speak("提醒你，" + reminder);
+    held_.clear();
+    return;
+  case common::IntentType::ReminderClarify:
+    Speak("请说清楚多久后提醒你，以及要提醒什么。比如十分钟后提醒我喝水。");
+    return;
+  case common::IntentType::Chat:
+    EnqueueChat(text);
+    return;
+  }
+}
+
+void DialogueController::HandleMemoryResult(
+    const DialogueMemoryResult &result) {
+  HandleMemoryCommandResult(result);
+}
+
+void DialogueController::HandleReminderDue(const std::string &content) {
+  if (content.empty())
+    return;
+  if (quiet_.load())
+    held_.push_back(content);
+  else
+    Speak("提醒你，" + content);
+}
+
+void DialogueController::HandleAudioPlaying(bool playing) {
+  if (!callbacks_.publish_state)
+    return;
+  callbacks_.publish_state(playing         ? common::RobotState::Speaking
+                           : quiet_.load() ? common::RobotState::Quiet
+                                           : common::RobotState::Idle);
+}
+
+void DialogueController::HandleSpeechAwake(bool awake) {
+  if (awake) {
+    hushed_.store(false);
+    ++generation_;
+    tool_cv_.notify_all();
+  }
+  if (!callbacks_.publish_state)
+    return;
+  callbacks_.publish_state(awake           ? common::RobotState::Listening
+                           : quiet_.load() ? common::RobotState::Quiet
+                                           : common::RobotState::Idle);
+}
+
+void DialogueController::HandleVolumeState(int percent) {
+  {
+    std::lock_guard<std::mutex> lock(tool_mutex_);
+    if (tool_volume_pending_) {
+      tool_volume_result_ = {{"ok", true}, {"percent", percent}};
+      tool_cv_.notify_all();
+      return;
+    }
+  }
+  if (percent > 0)
+    Speak("音量调到百分之" + std::to_string(percent) + "。");
+  else if (callbacks_.publish_state)
+    callbacks_.publish_state(common::RobotState::Muted);
+}
+
+void DialogueController::HandleMusicState(const DialogueMusicStatus &status) {
+  std::lock_guard<std::mutex> lock(tool_mutex_);
+  music_state_ = status;
+  ++music_sequence_;
+  tool_cv_.notify_all();
+}
+
+void DialogueController::HandleAudioPlay(const std::string &path) {
+  if (!path.empty())
+    return;
+  hushed_.store(true);
+  ++generation_;
+  tool_cv_.notify_all();
+}
+
+void DialogueController::HandleTimerTick() {
+  if (!loaded_)
+    RequestMemory(common::MemoryOperation::GetQuiet);
+}
+
+void DialogueController::Speak(const std::string &text) {
+  if (hushed_.load() || stopping_.load())
+    return;
+  if (callbacks_.publish_state)
+    callbacks_.publish_state(common::RobotState::Thinking);
+  if (callbacks_.speak)
+    callbacks_.speak(text);
+}
+
+void DialogueController::RequestMemory(common::MemoryOperation operation,
+                                       const std::string &content,
+                                       std::int32_t delay_seconds,
+                                       bool enabled) {
+  DialogueMemoryCommand command;
+  command.operation = operation;
+  command.request_id = std::to_string(++next_memory_request_id_);
+  command.content = content;
+  command.delay_seconds = delay_seconds;
+  command.enabled = enabled;
+  pending_[command.request_id] = operation;
+  if (callbacks_.publish_memory_command)
+    callbacks_.publish_memory_command(command);
+}
+
+void DialogueController::HandleMemoryCommandResult(
+    const DialogueMemoryResult &result) {
+  if (result.request_id.rfind("tool-", 0) == 0) {
+    std::lock_guard<std::mutex> lock(tool_mutex_);
+    auto entry = tool_results_.find(result.request_id);
+    if (entry != tool_results_.end())
+      entry->second = {
+          {"ok", result.ok},           {"error", result.error},
+          {"facts", result.facts},     {"content", result.content},
+          {"deleted", result.deleted}, {"enabled", result.enabled}};
+    tool_cv_.notify_all();
+    return;
+  }
+
+  common::MemoryOperation operation;
+  if (result.request_id.rfind("intent-", 0) == 0) {
+    operation = result.operation;
+  } else {
+    auto it = pending_.find(result.request_id);
+    if (it == pending_.end())
+      return;
+    operation = it->second;
+    pending_.erase(it);
+  }
+
+  if (operation == common::MemoryOperation::GetQuiet) {
+    if (result.ok) {
+      quiet_.store(result.enabled);
+      loaded_ = true;
+    }
+    return;
+  }
+  if (operation == common::MemoryOperation::SetQuiet)
+    return;
+  if (!result.ok) {
+    Speak("这件事刚才没保存成功，请再说一次。");
+    return;
+  }
+  if (operation == common::MemoryOperation::SaveFact)
+    Speak("好，我记住了。");
+  else if (operation == common::MemoryOperation::ForgetFact)
+    Speak(result.deleted > 0 ? "已经忘记了。" : "我没有找到这条记忆。");
+  else if (operation == common::MemoryOperation::ListFacts) {
+    std::string facts;
+    for (const auto &fact : result.facts) {
+      if (!facts.empty())
+        facts += "；";
+      facts += fact;
+    }
+    Speak(facts.empty() ? "你还没有让我记住什么。" : "我记得：" + facts);
+  } else if (operation == common::MemoryOperation::AddReminder)
+    Speak("好的，我会提醒你" + result.content + "。");
+}
+
+json DialogueController::ToolDefinitions() {
   json tools = json::array();
   auto add = [&](const char *name, const char *description,
                  json properties = json::object(),
@@ -117,11 +359,11 @@ json DialogueNode::ToolDefinitions() {
   return tools;
 }
 
-bool DialogueNode::Cancelled(std::uint64_t generation) const {
-  return stopping_ || !rclcpp::ok() || generation_.load() != generation;
+bool DialogueController::IsGenerationCancelled(std::uint64_t generation) const {
+  return stopping_.load() || generation_.load() != generation;
 }
 
-void DialogueNode::EnqueueChat(const std::string &text) {
+void DialogueController::EnqueueChat(const std::string &text) {
   std::lock_guard<std::mutex> lock(tool_mutex_);
   // New accepted requests supersede any old cloud response. Standby alone does
   // not.
@@ -131,8 +373,8 @@ void DialogueNode::EnqueueChat(const std::string &text) {
   tool_cv_.notify_all();
 }
 
-void DialogueNode::ChatWorker() {
-  while (!stopping_ && rclcpp::ok()) {
+void DialogueController::WorkerLoop() {
+  while (!stopping_.load()) {
     ChatJob job;
     {
       std::unique_lock<std::mutex> lock(tool_mutex_);
@@ -145,11 +387,11 @@ void DialogueNode::ChatWorker() {
       job = jobs_.front();
       jobs_.pop_front();
     }
-    if (Cancelled(job.generation))
+    if (IsGenerationCancelled(job.generation))
       continue;
     try {
-      auto memory =
-          MemoryTool(common::MemoryOperation::ListFacts, {}, 0, job.generation);
+      auto memory = ExecuteMemoryTool(common::MemoryOperation::ListFacts, {}, 0,
+                                      job.generation);
       std::string facts;
       if (memory.value("ok", false))
         for (const auto &fact : memory["facts"]) {
@@ -157,48 +399,91 @@ void DialogueNode::ChatWorker() {
             facts += "；";
           facts += fact.get<std::string>();
         }
-      if (!Cancelled(job.generation))
-        Chat(job.text, facts, job.generation);
+      if (!IsGenerationCancelled(job.generation))
+        HandleChat(job.text, facts, job.generation);
     } catch (const std::exception &e) {
       LOG_WARN("Tool conversation failed: {}", e.what());
-      if (!Cancelled(job.generation))
+      if (!IsGenerationCancelled(job.generation))
         Speak("这次处理没完成，请再叫我试一次。");
     }
   }
 }
 
-json DialogueNode::MemoryTool(common::MemoryOperation operation,
-                              const std::string &content, int delay,
-                              std::uint64_t generation) {
-  if (Cancelled(generation))
+json DialogueController::ExecuteMemoryTool(common::MemoryOperation operation,
+                                           const std::string &content,
+                                           int delay,
+                                           std::uint64_t generation) {
+  if (IsGenerationCancelled(generation))
     return Failure("cancelled");
   const auto id = "tool-" + std::to_string(++tool_id_);
   std::unique_lock<std::mutex> lock(tool_mutex_);
   tool_results_[id] = nullptr;
-  xiaocai_msgs::msg::MemoryCommand request;
-  request.timestamp = now();
-  request.request_id = id;
-  request.operation = static_cast<std::uint8_t>(operation);
-  request.content = content;
-  request.delay_seconds = delay;
-  memory_publisher_->publish(request);
+  DialogueMemoryCommand command;
+  command.request_id = id;
+  command.operation = operation;
+  command.content = content;
+  command.delay_seconds = delay;
+  lock.unlock();
+  if (!callbacks_.publish_memory_command)
+    return Failure("memory command publisher unavailable");
+  callbacks_.publish_memory_command(command);
+  lock.lock();
   const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (tool_results_[id].is_null() && !Cancelled(generation) &&
+  while (tool_results_[id].is_null() && !IsGenerationCancelled(generation) &&
          std::chrono::steady_clock::now() < deadline)
     tool_cv_.wait_for(lock, 100ms);
   json result = tool_results_[id];
   tool_results_.erase(id);
   if (result.is_null())
-    return Failure(Cancelled(generation)
+    return Failure(IsGenerationCancelled(generation)
                        ? "cancelled"
                        : "memory response timeout; execution may have "
                          "occurred, do not retry automatically");
   return result;
 }
 
-json DialogueNode::ExecuteTool(const std::string &name, const json &args,
-                               std::uint64_t generation, bool &music_started) {
-  if (Cancelled(generation))
+json DialogueController::QueryVolumeTool(std::uint64_t generation) {
+  struct ResponseState {
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool received{false};
+    DialogueVolumeResult result;
+  };
+
+  if (IsGenerationCancelled(generation))
+    return Failure("cancelled");
+  if (!callbacks_.request_volume)
+    return Failure("volume service unavailable");
+
+  auto response = std::make_shared<ResponseState>();
+  callbacks_.request_volume([response](DialogueVolumeResult result) {
+    {
+      std::lock_guard<std::mutex> lock(response->mutex);
+      response->result = std::move(result);
+      response->received = true;
+    }
+    response->condition.notify_all();
+  });
+
+  std::unique_lock<std::mutex> lock(response->mutex);
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (!response->received && !IsGenerationCancelled(generation) &&
+         std::chrono::steady_clock::now() < deadline)
+    response->condition.wait_for(lock, 100ms);
+  if (!response->received)
+    return Failure(IsGenerationCancelled(generation)
+                       ? "cancelled"
+                       : "volume service timeout");
+  if (!response->result.ok)
+    return Failure(response->result.error.empty() ? "volume service unavailable"
+                                                  : response->result.error);
+  return {{"ok", true}, {"percent", response->result.percent}};
+}
+
+json DialogueController::ExecuteTool(const std::string &name, const json &args,
+                                     std::uint64_t generation,
+                                     bool &music_started) {
+  if (IsGenerationCancelled(generation))
     return Failure("cancelled");
   try {
     if (name == "get_current_time") {
@@ -220,43 +505,34 @@ json DialogueNode::ExecuteTool(const std::string &name, const json &args,
     }
     if (name == "get_volume") {
       ValidateKeys(args, {});
-      if (!volume_get_client_->service_is_ready())
-        return Failure("volume service unavailable");
-      auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
-      request->timestamp = now();
-      auto future = volume_get_client_->async_send_request(request);
-      const auto deadline = std::chrono::steady_clock::now() + 3s;
-      while (!Cancelled(generation) &&
-             std::chrono::steady_clock::now() < deadline) {
-        if (future.wait_for(100ms) == std::future_status::ready)
-          return {{"ok", true}, {"percent", future.get()->percent}};
-      }
-      volume_get_client_->remove_pending_request(future);
-      return Failure(Cancelled(generation) ? "cancelled"
-                                           : "volume service timeout");
+      return QueryVolumeTool(generation);
     }
     if (name == "set_volume") {
       ValidateKeys(args, {"action", "percent"});
       const auto action = TextArg(args, "action");
-      xiaocai_msgs::msg::VolumeCommand command;
-      command.timestamp = now();
+      common::VolumeAction volume_action;
+      int percent = 0;
       using Action = common::VolumeAction;
       if (action == "set") {
-        command.action = static_cast<std::uint8_t>(Action::Set);
-        command.percent = IntArg(args, "percent", 0, 150);
+        volume_action = Action::Set;
+        percent = IntArg(args, "percent", 0, 150);
       } else if (action == "up" || action == "down") {
         if (args.contains("percent"))
           throw std::runtime_error("percent is only valid for action set");
-        command.action = static_cast<std::uint8_t>(
-            action == "up" ? Action::Up : Action::Down);
+        volume_action = action == "up" ? Action::Up : Action::Down;
       } else
         throw std::runtime_error("invalid volume action");
       std::unique_lock<std::mutex> lock(tool_mutex_);
       tool_volume_pending_ = true;
       tool_volume_result_ = nullptr;
-      volume_command_publisher_->publish(command);
+      lock.unlock();
+      if (!callbacks_.publish_volume_command)
+        return Failure("volume command publisher unavailable");
+      callbacks_.publish_volume_command(volume_action, percent);
+      lock.lock();
       const auto deadline = std::chrono::steady_clock::now() + 3s;
-      while (tool_volume_result_.is_null() && !Cancelled(generation) &&
+      while (tool_volume_result_.is_null() &&
+             !IsGenerationCancelled(generation) &&
              std::chrono::steady_clock::now() < deadline)
         tool_cv_.wait_for(lock, 100ms);
       auto result = tool_volume_result_;
@@ -271,7 +547,7 @@ json DialogueNode::ExecuteTool(const std::string &name, const json &args,
       if (!music_sequence_)
         return Failure("music node unavailable");
       return {{"ok", true},
-              {"state", music_state_.state},
+              {"state", static_cast<std::uint8_t>(music_state_.state)},
               {"title", music_state_.title},
               {"position_seconds", music_state_.position_seconds},
               {"duration_seconds", music_state_.duration_seconds},
@@ -289,73 +565,74 @@ json DialogueNode::ExecuteTool(const std::string &name, const json &args,
                                              "stop", "next",  "previous"};
       if (!actions.count(action))
         throw std::runtime_error("invalid music action");
-      xiaocai_msgs::msg::MusicCommand command;
+      common::MusicAction music_action;
       using Action = common::MusicAction;
-      command.timestamp = now();
       if (action == "play")
-        command.action = static_cast<std::uint8_t>(Action::Play);
+        music_action = Action::Play;
       else if (action == "pause")
-        command.action = static_cast<std::uint8_t>(Action::Pause);
+        music_action = Action::Pause;
       else if (action == "resume")
-        command.action = static_cast<std::uint8_t>(Action::Resume);
+        music_action = Action::Resume;
       else if (action == "stop")
-        command.action = static_cast<std::uint8_t>(Action::Stop);
+        music_action = Action::Stop;
       else if (action == "next")
-        command.action = static_cast<std::uint8_t>(Action::Next);
+        music_action = Action::Next;
       else
-        command.action = static_cast<std::uint8_t>(Action::Previous);
-      command.request_id = ++tool_id_;
+        music_action = Action::Previous;
+      const auto request_id = ++tool_id_;
+      std::string query;
       if (action == "play")
-        command.query = TextArg(args, "query");
+        query = TextArg(args, "query");
       else if (args.contains("query"))
         throw std::runtime_error("query is only valid for play");
       std::unique_lock<std::mutex> lock(tool_mutex_);
       const auto sequence = music_sequence_;
-      music_command_publisher_->publish(command);
-      const auto expected = static_cast<std::uint8_t>(
-          action == "stop"    ? common::MusicState::Stopped
-          : action == "pause" ? common::MusicState::Paused
-                              : common::MusicState::Playing);
+      lock.unlock();
+      if (!callbacks_.publish_music_command)
+        return Failure("music command publisher unavailable");
+      callbacks_.publish_music_command(music_action, query, request_id);
+      lock.lock();
+      const auto expected = action == "stop"    ? common::MusicState::Stopped
+                            : action == "pause" ? common::MusicState::Paused
+                                                : common::MusicState::Playing;
       const auto deadline = std::chrono::steady_clock::now() + 40s;
-      while (!Cancelled(generation) &&
+      while (!IsGenerationCancelled(generation) &&
              std::chrono::steady_clock::now() < deadline) {
         if (music_sequence_ > sequence &&
-            music_state_.request_id == command.request_id &&
+            music_state_.request_id == request_id &&
             (music_state_.state == expected ||
-             music_state_.state ==
-                 static_cast<std::uint8_t>(common::MusicState::Error))) {
-          if (music_state_.state ==
-              static_cast<std::uint8_t>(common::MusicState::Error))
+             music_state_.state == common::MusicState::Error)) {
+          if (music_state_.state == common::MusicState::Error)
             return Failure(music_state_.error);
-          music_started = expected == static_cast<std::uint8_t>(
-                                          common::MusicState::Playing);
+          music_started = expected == common::MusicState::Playing;
           return {{"ok", true},
-                  {"state", music_state_.state},
+                  {"state", static_cast<std::uint8_t>(music_state_.state)},
                   {"title", music_state_.title}};
         }
         tool_cv_.wait_for(lock, 100ms);
       }
-      return Failure(Cancelled(generation)
+      return Failure(IsGenerationCancelled(generation)
                          ? "cancelled"
                          : "music response timeout; execution may still be "
                            "pending, do not retry automatically");
     }
     if (name == "list_memories") {
       ValidateKeys(args, {});
-      return MemoryTool(common::MemoryOperation::ListFacts, {}, 0, generation);
+      return ExecuteMemoryTool(common::MemoryOperation::ListFacts, {}, 0,
+                               generation);
     }
     if (name == "save_memory" || name == "forget_memory") {
       ValidateKeys(args, {"content"});
-      return MemoryTool(name == "save_memory"
-                            ? common::MemoryOperation::SaveFact
-                            : common::MemoryOperation::ForgetFact,
-                        TextArg(args, "content"), 0, generation);
+      return ExecuteMemoryTool(name == "save_memory"
+                                   ? common::MemoryOperation::SaveFact
+                                   : common::MemoryOperation::ForgetFact,
+                               TextArg(args, "content"), 0, generation);
     }
     if (name == "create_reminder") {
       ValidateKeys(args, {"content", "delay_seconds"});
-      return MemoryTool(common::MemoryOperation::AddReminder,
-                        TextArg(args, "content"),
-                        IntArg(args, "delay_seconds", 1, 2592000), generation);
+      return ExecuteMemoryTool(
+          common::MemoryOperation::AddReminder, TextArg(args, "content"),
+          IntArg(args, "delay_seconds", 1, 2592000), generation);
     }
     return Failure("unknown tool; only listed robot tools are allowed");
   } catch (const std::exception &e) {
@@ -363,12 +640,13 @@ json DialogueNode::ExecuteTool(const std::string &name, const json &args,
   }
 }
 
-json DialogueNode::Completion(const json &messages, std::uint64_t generation) {
+json DialogueController::Completion(const json &messages,
+                                    std::uint64_t generation) {
   const char *key = std::getenv("DEEPSEEK_API_KEY");
   if (!key || !*key)
     throw std::runtime_error("DEEPSEEK_API_KEY missing");
   const auto body = json{
-      {"model", model_},
+      {"model", settings_.model},
       {"messages", messages},
       {"tools", ToolDefinitions()},
       {"tool_choice", "auto"},
@@ -382,8 +660,9 @@ json DialogueNode::Completion(const json &messages, std::uint64_t generation) {
   curl_slist *headers = nullptr;
   headers = curl_slist_append(headers, "Content-Type: application/json");
   headers = curl_slist_append(headers, auth.c_str());
-  Transfer transfer{[this, generation] { return Cancelled(generation); }};
-  curl_easy_setopt(curl, CURLOPT_URL, api_url_.c_str());
+  Transfer transfer{
+      [this, generation] { return IsGenerationCancelled(generation); }};
+  curl_easy_setopt(curl, CURLOPT_URL, settings_.api_url.c_str());
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
   curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
@@ -401,7 +680,7 @@ json DialogueNode::Completion(const json &messages, std::uint64_t generation) {
   curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
   LOG_INFO("DeepSeek completion: HTTP={} curl={}", status, (int)code);
-  const auto parsed = Parse(response);
+  const auto parsed = json::parse(response, nullptr, false);
   if (code != CURLE_OK || status != 200 || !parsed.is_object() ||
       !parsed.contains("choices") || !parsed["choices"].is_array() ||
       parsed["choices"].empty())
@@ -410,8 +689,9 @@ json DialogueNode::Completion(const json &messages, std::uint64_t generation) {
   return parsed["choices"][0].at("message");
 }
 
-void DialogueNode::Chat(const std::string &text, const std::string &facts,
-                        std::uint64_t generation) {
+void DialogueController::HandleChat(const std::string &text,
+                                    const std::string &facts,
+                                    std::uint64_t generation) {
   json messages = json::array();
   std::string system =
       "你是桌面陪伴机器人小蔡，安静、体贴，用自然简短中文回答，通常一两句。"
@@ -432,9 +712,10 @@ void DialogueNode::Chat(const std::string &text, const std::string &facts,
   int calls_used = 0;
   std::map<std::string, std::pair<std::string, json>> executed;
   std::string answer;
-  for (int round = 0; round < 5 && !Cancelled(generation); ++round) {
+  for (int round = 0; round < 5 && !IsGenerationCancelled(generation);
+       ++round) {
     auto assistant = Completion(messages, generation);
-    if (Cancelled(generation))
+    if (IsGenerationCancelled(generation))
       return;
     if (!assistant.is_object())
       throw std::runtime_error("invalid assistant message");
@@ -452,7 +733,7 @@ void DialogueNode::Chat(const std::string &text, const std::string &facts,
       throw std::runtime_error("tool call limit exceeded");
     messages.push_back(assistant);
     for (const auto &call : assistant["tool_calls"]) {
-      if (Cancelled(generation))
+      if (IsGenerationCancelled(generation))
         return;
       const auto id = call.at("id").get<std::string>();
       const auto name = call.at("function").at("name").get<std::string>();
@@ -467,7 +748,7 @@ void DialogueNode::Chat(const std::string &text, const std::string &facts,
                      ? executed.at(id).second
                      : Failure("tool_call_id reused with different arguments");
       else {
-        const auto args = Parse(arguments);
+        const auto args = json::parse(arguments, nullptr, false);
         result = ExecuteTool(name, args, generation, music_started);
         executed[id] = {signature, result};
       }
@@ -477,7 +758,7 @@ void DialogueNode::Chat(const std::string &text, const std::string &facts,
           {{"role", "tool"}, {"tool_call_id", id}, {"content", result.dump()}});
     }
   }
-  if (Cancelled(generation))
+  if (IsGenerationCancelled(generation))
     return;
   if (answer.empty())
     throw std::runtime_error("no final answer");
@@ -492,13 +773,13 @@ void DialogueNode::Chat(const std::string &text, const std::string &facts,
   bool music_playing = false;
   {
     std::lock_guard<std::mutex> lock(tool_mutex_);
-    music_playing = music_state_.state ==
-                    static_cast<std::uint8_t>(common::MusicState::Playing);
+    music_playing = music_state_.state == common::MusicState::Playing;
   }
   if (music_started && music_playing) {
     LOG_INFO("Music playing; final response received, voice acknowledgement "
              "omitted");
-    PublishState(common::RobotState::Idle);
+    if (callbacks_.publish_state)
+      callbacks_.publish_state(common::RobotState::Idle);
   } else
     Speak(answer);
 }

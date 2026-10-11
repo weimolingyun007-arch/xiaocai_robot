@@ -41,9 +41,9 @@ private:
   LogManager log_manager_;
   std::string capture_device_, playback_device_, beep_, silence_,
       wake_ack_path_;
-  int volume_percent_ = 80;
-  std::atomic<bool> stop_{false}, silenced_{true};
-  std::atomic<pid_t> capture_pid_{-1}, playback_pid_{-1};
+  int volume_percent_;
+  std::atomic<bool> stop_, silenced_;
+  std::atomic<pid_t> capture_pid_, playback_pid_;
   std::thread capture_, playback_;
   std::mutex mu_;
   std::condition_variable cv_;

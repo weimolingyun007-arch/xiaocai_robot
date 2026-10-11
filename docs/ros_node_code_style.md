@@ -86,9 +86,11 @@
 - ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`。
 - 订阅者回调统一由节点成员方法处理，方法名采用 `On<消息或主题>Callback` 格式，例如 `OnTextCallback()`、`OnIntentCallback()`、`OnAudioPlayingCallback()`。`InitSubscribers()` 中的订阅 lambda 只转交消息，不承载业务处理逻辑。
 - ROS 通信对象成员变量以用途或主题命名，并使用完整对象类型后缀：发布者为 `_publisher_`、订阅者为 `_subscriber_`、客户端为 `_client_`、服务端为 `_server_`。例如 `state_publisher_`、`intent_subscriber_`、`volume_get_client_`、`volume_get_server_`；避免使用 `state_`、`intent_sub_` 等无法直接判断对象类型的名称。
+- 封装客户端请求的成员函数统一使用 `Client` 前缀，例如 `ClientVolume()`；客户端请求函数单独分组，不与 `Publish...()` 发布函数放在同一组。
 - 类头文件中的私有成员函数按职责分组；每组第一条声明上方添加单行注释说明该组职责，不同组之间空一行。ROS 通信方法可按初始化、消息发布、订阅回调等职责分组。
 - `.cpp` 中成员函数定义的分组顺序及组内顺序必须与头文件中的声明一致。
 - 类成员变量使用 `snake_case` 并以下划线结尾，例如 `intent_rules_`、`intent_publisher_`。
+- 运行状态和资源句柄等类成员需要显式设置初始值时，在 `.cpp` 构造函数的初始化列表中设置；头文件的成员声明处不使用类内初始化器，例如不要写 `VoskRecognizer *wake_recognizer_ = nullptr;`。配置结构体和结果值类型可按需要定义字段默认值。依赖其他资源或运行时 API 创建的对象，在构造函数体中按依赖顺序创建并检查结果。
 - 常量使用 `k` 前缀和描述性名称，例如 `kMaxRetryCount`；私有实现细节和文件内常量放在 `.cpp` 的匿名命名空间中。
 - 使用仓库根目录 `.clang-format` 规定的格式：基于 LLVM 风格、两个空格缩进；左花括号与函数或控制语句同行。简单提前返回可以单行书写；多步操作或多分支逻辑使用多行和花括号。
 - 头文件使用 `#pragma once`，只包含声明本身需要的依赖；函数实现放在 `.cpp` 文件中。
@@ -151,6 +153,7 @@ retention_days = 7
 - 节点间通信使用已有的 `xiaocai_msgs` 消息和服务类型；修改接口时，同时检查所有发布者、订阅者、客户端和服务端。
 - CMake 目标必须列出实际编译的全部 `.cpp` 文件，并声明使用到的 ROS 依赖；`package.xml` 中同步维护包依赖。
 - 项目使用 C++17。CMake 配置应支持生成 `compile_commands.json`，供 VS Code IntelliSense 使用。
+- 多节点工作区的 `.vscode/c_cpp_properties.json` 应指向 `build/compile_commands.json`；构建脚本合并各节点包生成的编译数据库，确保每个源文件使用本包实际的编译器参数和 include 路径。
 - 新增 ROS 依赖时，同时更新 `CMakeLists.txt` 和 `package.xml`，并确认交叉编译 sysroot 中包含相应依赖。
 
 ## clang-format Git hook

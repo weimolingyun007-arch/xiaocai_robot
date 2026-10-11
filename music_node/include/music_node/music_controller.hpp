@@ -81,15 +81,14 @@ private:
   LogManager &log_manager_;
   StatusCallback status_callback_;
   SpeechCallback speech_callback_;
-  std::atomic<bool> stop_{false}, silenced_{false}, voice_playing_{false},
-      busy_{false};
-  std::atomic<double> last_voice_at_{0.0};
-  std::atomic<std::uint64_t> revision_{0};
+  std::atomic<bool> stop_, silenced_, voice_playing_, busy_;
+  std::atomic<double> last_voice_at_;
+  std::atomic<std::uint64_t> revision_;
   std::mutex jobs_mutex_, state_mutex_, backend_mutex_;
   std::condition_variable ready_;
   std::deque<Job> jobs_;
   std::thread worker_;
-  int backend_fd_{-1};
+  int backend_fd_;
   MusicPlaybackStatus status_;
 };
 

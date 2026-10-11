@@ -41,7 +41,7 @@ private:
   void ExecuteSql(const char *query);
   sqlite3_stmt *PrepareSqlStatement(const char *query);
 
-  sqlite3 *db_{nullptr};
+  sqlite3 *db_;
 };
 
 } // namespace xiaocai_robot

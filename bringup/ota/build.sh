@@ -139,4 +139,6 @@ for module in "${modules[@]}"; do
     "$progress" "$completed_modules" "$total_modules" "$module"
 done
 
+python3 "$workspace/bringup/ota/merge_compile_commands.py" "$build_root"
+
 echo "All Xiaocai nodes compiled into $build_root."

@@ -120,7 +120,7 @@ public:
         filename_prefix_(std::move(logger_name) + "_"),
         max_file_size_bytes_(config.max_file_size_bytes),
         max_files_per_day_(config.max_files_per_day),
-        retention_days_(config.retention_days) {
+        retention_days_(config.retention_days), current_size_(0U) {
     std::filesystem::create_directories(directory_);
     BeginDay(
         std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
@@ -293,7 +293,7 @@ private:
   int retention_days_;
   std::string active_day_;
   std::string active_stamp_;
-  std::size_t current_size_{0U};
+  std::size_t current_size_;
   spdlog::details::file_helper file_;
 };
 

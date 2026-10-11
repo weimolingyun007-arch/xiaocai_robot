@@ -7,7 +7,7 @@
 
 namespace xiaocai_robot {
 
-MemoryManager::MemoryManager(const std::string &database_path) {
+MemoryManager::MemoryManager(const std::string &database_path) : db_(nullptr) {
   const std::filesystem::path path(database_path);
   if (!path.parent_path().empty())
     std::filesystem::create_directories(path.parent_path());

@@ -17,7 +17,9 @@ namespace xiaocai_robot {
 
 AudioIoNode::AudioIoNode()
     : Node("audio_io_node"), audio_io_config_(),
-      log_manager_("audio_io_node", audio_io_config_.Logging()) {
+      log_manager_("audio_io_node", audio_io_config_.Logging()),
+      volume_percent_(80), stop_(false), silenced_(true), capture_pid_(-1),
+      playback_pid_(-1) {
   const auto &settings = audio_io_config_.Settings();
   capture_device_ =
       declare_parameter<std::string>("capture_device", settings.capture_device);

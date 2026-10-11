@@ -15,7 +15,7 @@ add_executable(dialogue_node
   src/main.cpp
   src/dialogue_config.cpp
   src/dialogue_node.cpp
-  src/tools.cpp
+  src/dialogue_controller.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
 ament_target_dependencies(dialogue_node ament_index_cpp rclcpp std_msgs xiaocai_msgs)
@@ -31,8 +31,7 @@ endif()
 target_link_libraries(dialogue_node "${CURL_LIBRARY}")
 option(XIAOCAI_BUILD_TOOL_TESTS "Build the isolated ROS/DeepSeek protocol regression test" OFF)
 if(XIAOCAI_BUILD_TOOL_TESTS)
-  add_executable(dialogue_tool_calls_test tests/tool_calls.cpp src/dialogue_config.cpp src/dialogue_node.cpp src/tools.cpp "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
-  target_compile_definitions(dialogue_tool_calls_test PRIVATE XIAOCAI_DIALOGUE_TEST)
+  add_executable(dialogue_tool_calls_test tests/tool_calls.cpp src/dialogue_config.cpp src/dialogue_node.cpp src/dialogue_controller.cpp "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
   ament_target_dependencies(dialogue_tool_calls_test ament_index_cpp rclcpp std_msgs xiaocai_msgs)
   target_link_libraries(dialogue_tool_calls_test Threads::Threads "${CURL_LIBRARY}")
 endif()
