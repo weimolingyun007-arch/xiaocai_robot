@@ -19,7 +19,7 @@ private:
   void InitTimers();
   void Sql(const char *query);
   sqlite3_stmt *Prepare(const char *query);
-  void Command(const xiaocai_msgs::msg::MemoryCommand &message);
+  void OnMemoryCommandCallback(const xiaocai_msgs::msg::MemoryCommand &message);
   void CheckDue();
   MemoryConfig memory_config_;
   xc::LogManager log_manager_;

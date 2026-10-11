@@ -88,14 +88,11 @@ void MusicNode::InitPublishers() {
 
 void MusicNode::InitSubscribers() {
   intent_sub_ = create_subscription<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent", 10,
-    [this](xiaocai_msgs::msg::Intent::SharedPtr message) { OnIntent(*message); });
+    [this](xiaocai_msgs::msg::Intent::SharedPtr message) { OnIntentCallback(*message); });
   play_sub_ = create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10,
-    [this](xiaocai_msgs::msg::AudioPlay::SharedPtr message) { OnAudioPlay(message->path); });
+    [this](xiaocai_msgs::msg::AudioPlay::SharedPtr message) { OnAudioPlayCallback(*message); });
   voice_sub_ = create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10,
-    [this](std_msgs::msg::Bool::SharedPtr message) {
-      voice_playing_ = message->data;
-      last_voice_at_ = xc::Monotonic();
-    });
+    [this](std_msgs::msg::Bool::SharedPtr message) { OnAudioPlayingCallback(*message); });
 }
 
 void MusicNode::InitTimers() {
@@ -115,7 +112,8 @@ bool MusicNode::Current(std::uint64_t revision) const {
   return !stop_ && !silenced_ && revision_.load() == revision;
 }
 
-void MusicNode::OnAudioPlay(const std::string &path) {
+void MusicNode::OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay &message) {
+  const auto &path = message.path;
   if (path == "__stop__") {
     silenced_ = true;
     ++revision_;
@@ -140,7 +138,7 @@ void MusicNode::OnAudioPlay(const std::string &path) {
   }
 }
 
-void MusicNode::OnIntent(const xiaocai_msgs::msg::Intent &message) {
+void MusicNode::OnIntentCallback(const xiaocai_msgs::msg::Intent &message) {
   if (message.intent.rfind("music_", 0) != 0 || silenced_) return;
   const auto revision = ++revision_;
   if (message.intent == "music_stop" || message.intent == "music_pause") {
@@ -153,6 +151,11 @@ void MusicNode::OnIntent(const xiaocai_msgs::msg::Intent &message) {
   }
   ready_.notify_one();
   LOG_INFO("MusicNode intent: {}; query: {}", message.intent, message.content);
+}
+
+void MusicNode::OnAudioPlayingCallback(const std_msgs::msg::Bool &message) {
+  voice_playing_ = message.data;
+  last_voice_at_ = xc::Monotonic();
 }
 
 void MusicNode::SetState(State state, const std::string &error,const std::string &request_id) {

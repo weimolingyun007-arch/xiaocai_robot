@@ -15,14 +15,14 @@ public:
     node.results_.push_back({text, armed, generation});
   }
   static void Drain(SpeechInputNode &node) { node.DrainResults(); }
-  static void PlaybackEnded(SpeechInputNode &node) { node.OnPlaying(false); }
+  static void PlaybackEnded(SpeechInputNode &node) { node.OnAudioPlayingCallback(false); }
   static void ResetCooldown(SpeechInputNode &node) { node.last_wake_time_ = 0; }
   static void Timeout(SpeechInputNode &node) {
     node.ignore_until_ = 0;
     node.armed_until_ = xc::Monotonic() - 1;
     std_msgs::msg::UInt8MultiArray silence;
     silence.data.resize(3200);
-    node.OnAudio(silence);
+    node.OnAudioCallback(silence);
   }
 };
 

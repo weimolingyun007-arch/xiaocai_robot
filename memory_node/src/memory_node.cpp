@@ -30,7 +30,10 @@ void MemoryNode::InitPublishers() {
   }
 
 void MemoryNode::InitSubscribers() {
-    sub_=create_subscription<xiaocai_msgs::msg::MemoryCommand>("/xiaocai_robot/memory/command",10,[this](xiaocai_msgs::msg::MemoryCommand::SharedPtr m){Command(*m);});
+    sub_=create_subscription<xiaocai_msgs::msg::MemoryCommand>("/xiaocai_robot/memory/command",10,
+      [this](xiaocai_msgs::msg::MemoryCommand::SharedPtr message) {
+        OnMemoryCommandCallback(*message);
+      });
   }
 
 void MemoryNode::InitTimers() {
@@ -43,7 +46,7 @@ void MemoryNode::Sql(const char *query) {char *err=nullptr;if(sqlite3_exec(db_,q
 
 sqlite3_stmt *MemoryNode::Prepare(const char *query) {sqlite3_stmt *s=nullptr;if(sqlite3_prepare_v2(db_,query,-1,&s,nullptr)!=SQLITE_OK)throw std::runtime_error(sqlite3_errmsg(db_));return s;}
 
-void MemoryNode::Command(const xiaocai_msgs::msg::MemoryCommand &message) {
+void MemoryNode::OnMemoryCommandCallback(const xiaocai_msgs::msg::MemoryCommand &message) {
     xiaocai_msgs::msg::MemoryResult result;
     result.operation=message.operation;
     result.request_id=message.request_id;

@@ -39,9 +39,14 @@ private:
   void Request(xiaocai_robot::common::MemoryOperation operation,
       const std::string &content={},int32_t delay_seconds=0,bool enabled=false);
   void PublishState(xiaocai_robot::common::RobotState state);
-  void OnIntent(const xiaocai_msgs::msg::Intent &message);
-  void OnResult(const xiaocai_msgs::msg::MemoryResult &message);
-  void OnDue(const xiaocai_msgs::msg::Reminder &message);
+  void OnIntentCallback(const xiaocai_msgs::msg::Intent &message);
+  void OnMemoryResultCallback(const xiaocai_msgs::msg::MemoryResult &message);
+  void OnReminderDueCallback(const xiaocai_msgs::msg::Reminder &message);
+  void OnAudioPlayingCallback(const std_msgs::msg::Bool &message);
+  void OnSpeechAwakeCallback(const std_msgs::msg::Bool &message);
+  void OnVolumeStateCallback(const std_msgs::msg::Int32 &message);
+  void OnMusicStateCallback(const xiaocai_msgs::msg::MusicState &message);
+  void OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay &message);
   void Chat(const std::string &text,const std::string &facts,std::uint64_t generation);
   void EnqueueChat(const std::string &text);
   void ChatWorker();

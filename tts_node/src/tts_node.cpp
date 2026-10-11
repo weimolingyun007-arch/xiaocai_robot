@@ -32,7 +32,12 @@ void TtsNode::InitPublishers() {
   }
 
 void TtsNode::InitSubscribers() {
-    sub_=create_subscription<std_msgs::msg::String>("/xiaocai_robot/tts/text",10,[this](std_msgs::msg::String::SharedPtr m){Synthesize(m->data);});
+    sub_=create_subscription<std_msgs::msg::String>("/xiaocai_robot/tts/text",10,
+      [this](std_msgs::msg::String::SharedPtr message) { OnTextCallback(message); });
+  }
+
+void TtsNode::OnTextCallback(const std_msgs::msg::String::SharedPtr message) {
+    Synthesize(message->data);
   }
 
 TtsNode::~TtsNode() {if(tts_)SherpaOnnxDestroyOfflineTts(tts_);}

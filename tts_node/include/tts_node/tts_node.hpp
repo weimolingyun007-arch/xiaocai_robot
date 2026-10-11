@@ -14,6 +14,7 @@ public:
 private:
   void InitPublishers();
   void InitSubscribers();
+  void OnTextCallback(const std_msgs::msg::String::SharedPtr message);
   void Synthesize(std::string text);
   TtsConfig tts_config_;
   xc::LogManager log_manager_;

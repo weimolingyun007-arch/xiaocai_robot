@@ -77,7 +77,8 @@
 - 目录、文件名、变量使用 `snake_case`。
 - 项目自有函数和类成员方法统一使用 `PascalCase`（大驼峰），例如 `OnText()`、`InitPublishers()`、`Classify()`；函数声明、定义和所有调用点保持一致。`main` 等语言入口、外部接口要求固定名称的回调/重写方法，以及第三方库 API 保持其规定名称。
 - ROS 节点类名使用 `PascalCase` 并以 `Node` 结尾，例如 `MusicNode`、`SpeechInputNode`、`IntentNode`；业务辅助类和结构体使用体现职责的 `PascalCase`，例如 `IntentRules`、`IntentResult`。
-- ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`；回调方法采用 `On...` 前缀，例如 `OnText()`、`OnIntent()`。
+- ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`。
+- 订阅者回调统一由节点成员方法处理，方法名采用 `On<消息或主题>Callback` 格式，例如 `OnTextCallback()`、`OnIntentCallback()`、`OnAudioPlayingCallback()`。`InitSubscribers()` 中的订阅 lambda 只转交消息，不承载业务处理逻辑。
 - 类成员变量使用 `snake_case` 并以下划线结尾，例如 `intent_rules_`、`intent_publisher_`。
 - 常量使用 `k` 前缀和描述性名称，例如 `kMaxRetryCount`；私有实现细节和文件内常量放在 `.cpp` 的匿名命名空间中。
 - 使用两个空格缩进，左花括号与函数或控制语句同行。简单提前返回可以单行书写；多步操作或多分支逻辑使用多行和花括号。

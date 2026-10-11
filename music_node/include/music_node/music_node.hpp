@@ -24,8 +24,9 @@ private:
   void InitTimers();
   struct Job { std::string intent, content; std::uint64_t revision; std::string request_id; };
   struct Result { bool ok=false; xc::json data; std::string output; };
-  void OnIntent(const xiaocai_msgs::msg::Intent &message);
-  void OnAudioPlay(const std::string &path);
+  void OnIntentCallback(const xiaocai_msgs::msg::Intent &message);
+  void OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay &message);
+  void OnAudioPlayingCallback(const std_msgs::msg::Bool &message);
   void Work();
   void Execute(const Job &job);
   Result Cli(const std::vector<std::string> &arguments, std::uint64_t revision);

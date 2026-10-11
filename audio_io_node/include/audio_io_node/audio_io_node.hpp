@@ -25,6 +25,8 @@ private:
   void InitPublishers();
   void InitSubscribers();
   void InitServers();
+  void OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay::SharedPtr message);
+  void OnVolumeCommandCallback(const xiaocai_msgs::msg::VolumeCommand::SharedPtr message);
   void MakeBeep();
   void MakeSilence();
   void SetVolume(int percent,bool notify=false);

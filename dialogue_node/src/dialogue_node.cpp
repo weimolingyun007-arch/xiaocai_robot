@@ -33,20 +33,22 @@ void DialogueNode::InitPublishers() {
   }
 
 void DialogueNode::InitSubscribers() {
-    intent_sub_=create_subscription<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent",10,[this](xiaocai_msgs::msg::Intent::SharedPtr m){OnIntent(*m);});
-    result_sub_=create_subscription<xiaocai_msgs::msg::MemoryResult>("/xiaocai_robot/memory/result",10,[this](xiaocai_msgs::msg::MemoryResult::SharedPtr m){OnResult(*m);});
-    due_sub_=create_subscription<xiaocai_msgs::msg::Reminder>("/xiaocai_robot/reminder/due",10,[this](xiaocai_msgs::msg::Reminder::SharedPtr m){OnDue(*m);});
-    playing_sub_=create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing",10,[this](std_msgs::msg::Bool::SharedPtr m){PublishState(m->data?xiaocai_robot::common::RobotState::Speaking:quiet_?xiaocai_robot::common::RobotState::Quiet:xiaocai_robot::common::RobotState::Idle);});
-    awake_sub_=create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/speech/awake",10,[this](std_msgs::msg::Bool::SharedPtr m){if(m->data){hushed_=false;++generation_;tool_cv_.notify_all();}PublishState(m->data?xiaocai_robot::common::RobotState::Listening:quiet_?xiaocai_robot::common::RobotState::Quiet:xiaocai_robot::common::RobotState::Idle);});
+    intent_sub_=create_subscription<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent",10,
+      [this](xiaocai_msgs::msg::Intent::SharedPtr message){OnIntentCallback(*message);});
+    result_sub_=create_subscription<xiaocai_msgs::msg::MemoryResult>("/xiaocai_robot/memory/result",10,
+      [this](xiaocai_msgs::msg::MemoryResult::SharedPtr message){OnMemoryResultCallback(*message);});
+    due_sub_=create_subscription<xiaocai_msgs::msg::Reminder>("/xiaocai_robot/reminder/due",10,
+      [this](xiaocai_msgs::msg::Reminder::SharedPtr message){OnReminderDueCallback(*message);});
+    playing_sub_=create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing",10,
+      [this](std_msgs::msg::Bool::SharedPtr message){OnAudioPlayingCallback(*message);});
+    awake_sub_=create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/speech/awake",10,
+      [this](std_msgs::msg::Bool::SharedPtr message){OnSpeechAwakeCallback(*message);});
     volume_state_sub_=create_subscription<std_msgs::msg::Int32>("/xiaocai_robot/audio/volume/state",10,
-      [this](std_msgs::msg::Int32::SharedPtr m){
-        {std::lock_guard<std::mutex> lock(tool_mutex_);
-         if(tool_volume_pending_){tool_volume_result_={{"ok",true},{"percent",m->data}};tool_cv_.notify_all();return;}}
-        if(m->data>0)Speak("音量调到百分之"+std::to_string(m->data)+"。");else PublishState(xiaocai_robot::common::RobotState::Muted);});
+      [this](std_msgs::msg::Int32::SharedPtr message){OnVolumeStateCallback(*message);});
     music_sub_=create_subscription<xiaocai_msgs::msg::MusicState>("/xiaocai_robot/music/state",rclcpp::QoS(1).transient_local(),
-      [this](xiaocai_msgs::msg::MusicState::SharedPtr m){std::lock_guard<std::mutex> lock(tool_mutex_);music_state_=*m;++music_sequence_;tool_cv_.notify_all();});
+      [this](xiaocai_msgs::msg::MusicState::SharedPtr message){OnMusicStateCallback(*message);});
     interrupt_sub_=create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play",10,
-      [this](xiaocai_msgs::msg::AudioPlay::SharedPtr m){if(m->path=="__stop__"){hushed_=true;++generation_;tool_cv_.notify_all();}});
+      [this](xiaocai_msgs::msg::AudioPlay::SharedPtr message){OnAudioPlayCallback(*message);});
   }
 
 void DialogueNode::InitClients() {
@@ -80,7 +82,7 @@ void DialogueNode::Request(xiaocai_robot::common::MemoryOperation operation,
     memory_->publish(message);
   }
 
-void DialogueNode::OnIntent(const xiaocai_msgs::msg::Intent &message) {
+void DialogueNode::OnIntentCallback(const xiaocai_msgs::msg::Intent &message) {
     const auto &intent=message.intent;const auto &text=message.text;
     if(intent.rfind("music_",0)==0)return;
     if(hushed_)return;
@@ -115,7 +117,7 @@ void DialogueNode::OnIntent(const xiaocai_msgs::msg::Intent &message) {
     else EnqueueChat(text);
   }
 
-void DialogueNode::OnResult(const xiaocai_msgs::msg::MemoryResult &message) {
+void DialogueNode::OnMemoryResultCallback(const xiaocai_msgs::msg::MemoryResult &message) {
     if(message.request_id.rfind("tool-",0)==0) {
       std::lock_guard<std::mutex> lock(tool_mutex_);
       auto entry=tool_results_.find(message.request_id);
@@ -144,8 +146,39 @@ void DialogueNode::OnResult(const xiaocai_msgs::msg::MemoryResult &message) {
       Speak("好的，我会提醒你"+message.content+"。");
   }
 
-void DialogueNode::OnDue(const xiaocai_msgs::msg::Reminder &message) {
+void DialogueNode::OnReminderDueCallback(const xiaocai_msgs::msg::Reminder &message) {
     if(message.content.empty())return;
     if(quiet_)held_.push_back(message.content);
     else Speak("提醒你，"+message.content);
+  }
+
+void DialogueNode::OnAudioPlayingCallback(const std_msgs::msg::Bool &message) {
+    PublishState(message.data?xiaocai_robot::common::RobotState::Speaking:
+      quiet_?xiaocai_robot::common::RobotState::Quiet:xiaocai_robot::common::RobotState::Idle);
+  }
+
+void DialogueNode::OnSpeechAwakeCallback(const std_msgs::msg::Bool &message) {
+    if(message.data){hushed_=false;++generation_;tool_cv_.notify_all();}
+    PublishState(message.data?xiaocai_robot::common::RobotState::Listening:
+      quiet_?xiaocai_robot::common::RobotState::Quiet:xiaocai_robot::common::RobotState::Idle);
+  }
+
+void DialogueNode::OnVolumeStateCallback(const std_msgs::msg::Int32 &message) {
+    {
+      std::lock_guard<std::mutex> lock(tool_mutex_);
+      if(tool_volume_pending_){tool_volume_result_={{"ok",true},{"percent",message.data}};tool_cv_.notify_all();return;}
+    }
+    if(message.data>0)Speak("音量调到百分之"+std::to_string(message.data)+"。");
+    else PublishState(xiaocai_robot::common::RobotState::Muted);
+  }
+
+void DialogueNode::OnMusicStateCallback(const xiaocai_msgs::msg::MusicState &message) {
+    std::lock_guard<std::mutex> lock(tool_mutex_);
+    music_state_=message;
+    ++music_sequence_;
+    tool_cv_.notify_all();
+  }
+
+void DialogueNode::OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay &message) {
+    if(message.path=="__stop__"){hushed_=true;++generation_;tool_cv_.notify_all();}
   }

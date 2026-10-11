@@ -152,20 +152,12 @@ void SpeechInputNode::InitPublishers() {
 
 void SpeechInputNode::InitSubscribers() {
   mic_sub_ = create_subscription<std_msgs::msg::UInt8MultiArray>("/xiaocai_robot/audio/mic", 10,
-    [this](std_msgs::msg::UInt8MultiArray::SharedPtr m) { OnAudio(*m); });
+    [this](std_msgs::msg::UInt8MultiArray::SharedPtr message) { OnAudioCallback(*message); });
   playing_sub_ = create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10,
-    [this](std_msgs::msg::Bool::SharedPtr m) { OnPlaying(m->data); });
+    [this](std_msgs::msg::Bool::SharedPtr message) { OnAudioPlayingCallback(message->data); });
   music_sub_ = create_subscription<xiaocai_msgs::msg::MusicState>("/xiaocai_robot/music/state",
     rclcpp::QoS(1).transient_local(), [this](xiaocai_msgs::msg::MusicState::SharedPtr m) {
-      const bool playing = m->state == static_cast<std::uint8_t>(xiaocai_robot::common::MusicState::Playing);
-      if (playing == music_playing_) return;
-      music_playing_ = playing;
-      OnPlaying(playing_);
-      ++recognition_generation_;
-      request_in_flight_ = false;
-      std::lock_guard<std::mutex> lock(queue_mutex_);
-      segments_.clear();
-      results_.clear();
+      OnMusicStateCallback(*m);
     });
 }
 
@@ -183,10 +175,22 @@ SpeechInputNode::~SpeechInputNode() {
   if (wake_model_) vosk_model_free(wake_model_);
 }
 
-void SpeechInputNode::OnPlaying(bool playing) {
+void SpeechInputNode::OnAudioPlayingCallback(bool playing) {
   playing_ = playing;
   ResetCapture();
   if (!playing) ignore_until_ = xc::Monotonic() + 0.4;
+}
+
+void SpeechInputNode::OnMusicStateCallback(const xiaocai_msgs::msg::MusicState &message) {
+  const bool playing = message.state == static_cast<std::uint8_t>(xiaocai_robot::common::MusicState::Playing);
+  if (playing == music_playing_) return;
+  music_playing_ = playing;
+  OnAudioPlayingCallback(playing_);
+  ++recognition_generation_;
+  request_in_flight_ = false;
+  std::lock_guard<std::mutex> lock(queue_mutex_);
+  segments_.clear();
+  results_.clear();
 }
 
 void SpeechInputNode::ResetCapture() {
@@ -230,7 +234,7 @@ void SpeechInputNode::CollectSegments() {
   }
 }
 
-void SpeechInputNode::OnAudio(const std_msgs::msg::UInt8MultiArray &m) {
+void SpeechInputNode::OnAudioCallback(const std_msgs::msg::UInt8MultiArray &m) {
   if (xc::Monotonic() < ignore_until_ || m.data.size() < 2) return;
   if (playing_ || music_playing_) {
     if (vosk_recognizer_accept_waveform(wake_recognizer_,

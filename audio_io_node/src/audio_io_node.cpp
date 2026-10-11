@@ -48,34 +48,38 @@ void AudioIoNode::InitPublishers() {
 
 void AudioIoNode::InitSubscribers() {
     play_sub_ = create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10,
-      [this](xiaocai_msgs::msg::AudioPlay::SharedPtr m) {
-        if (m->path == "__stop__") {
-          xiaocai_robot::common::MpvCommand({"stop"});
-          silenced_.store(true);
-          {
-            std::lock_guard<std::mutex> lock(mu_);
-            queue_.clear();
-          }
-          const pid_t pid = playback_pid_.load();
-          if (pid > 0) kill(pid, SIGTERM);
-          cv_.notify_one();
-          return;
-        }
-        if (m->path == wake_ack_path_) silenced_.store(false);
-        if (silenced_.load()) return;
-        {
-          std::lock_guard<std::mutex> lock(mu_);
-          queue_.push_back(m->path);
-        }
-        cv_.notify_one();
-      });
+      [this](xiaocai_msgs::msg::AudioPlay::SharedPtr message) { OnAudioPlayCallback(message); });
     volume_command_sub_ = create_subscription<xiaocai_msgs::msg::VolumeCommand>("/xiaocai_robot/audio/volume/command", 10,
-      [this](xiaocai_msgs::msg::VolumeCommand::SharedPtr m) {
-        const auto action = static_cast<xiaocai_robot::common::VolumeAction>(m->action);
-        if(action==xiaocai_robot::common::VolumeAction::Up) SetVolume(volume_percent_+10,true);
-        else if(action==xiaocai_robot::common::VolumeAction::Down) SetVolume(volume_percent_-10,true);
-        else if(action==xiaocai_robot::common::VolumeAction::Set) SetVolume(m->percent,true);
-      });
+      [this](xiaocai_msgs::msg::VolumeCommand::SharedPtr message) { OnVolumeCommandCallback(message); });
+  }
+
+void AudioIoNode::OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay::SharedPtr message) {
+    if (message->path == "__stop__") {
+      xiaocai_robot::common::MpvCommand({"stop"});
+      silenced_.store(true);
+      {
+        std::lock_guard<std::mutex> lock(mu_);
+        queue_.clear();
+      }
+      const pid_t pid = playback_pid_.load();
+      if (pid > 0) kill(pid, SIGTERM);
+      cv_.notify_one();
+      return;
+    }
+    if (message->path == wake_ack_path_) silenced_.store(false);
+    if (silenced_.load()) return;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      queue_.push_back(message->path);
+    }
+    cv_.notify_one();
+  }
+
+void AudioIoNode::OnVolumeCommandCallback(const xiaocai_msgs::msg::VolumeCommand::SharedPtr message) {
+    const auto action = static_cast<xiaocai_robot::common::VolumeAction>(message->action);
+    if(action==xiaocai_robot::common::VolumeAction::Up) SetVolume(volume_percent_+10,true);
+    else if(action==xiaocai_robot::common::VolumeAction::Down) SetVolume(volume_percent_-10,true);
+    else if(action==xiaocai_robot::common::VolumeAction::Set) SetVolume(message->percent,true);
   }
 
 void AudioIoNode::InitServers() {

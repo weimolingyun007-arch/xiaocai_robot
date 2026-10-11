@@ -38,8 +38,9 @@ private:
     bool was_armed;
     std::uint64_t generation;
   };
-  void OnAudio(const std_msgs::msg::UInt8MultiArray &m);
-  void OnPlaying(bool playing);
+  void OnAudioCallback(const std_msgs::msg::UInt8MultiArray &message);
+  void OnAudioPlayingCallback(bool playing);
+  void OnMusicStateCallback(const xiaocai_msgs::msg::MusicState &message);
   void CollectSegments();
   void DecodeLoop();
   void DrainResults();
