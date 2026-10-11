@@ -15,12 +15,20 @@
 | `memory_node` | SQLite 记忆、免打扰状态和提醒 |
 | `tts_node` | sherpa-onnx 离线中文语音合成 |
 | `music_node` | 调用网易云 ncm-cli 搜歌、播放及控制 |
+| `common` | 节点共享的配置基类、日志管理、业务枚举和 MPV 辅助函数 |
 | `thirdparty` | C++ 头文件和 ARM64 动态库 |
 | `xiaocai_msgs` | ROS 2 自定义消息和服务接口源码 |
 | `bringup` | 编译、启动、停止和 systemd 开机自启脚本 |
+| `docs` | 节点代码结构和编写约定 |
 | `build` | 每个节点由 CMake 和 Make 生成的可执行文件 |
 
 源码目录内的模型文件放在使用它们的节点目录下。板端运行时，DeepSeek 密钥和记忆数据库分别放在 `resource/deepseek.env` 和 `resource/memory.sqlite3`，文件权限为 600。首次更新时部署脚本会从原来的 `dialogue_node/.secrets/`、`memory_node/data/` 迁移数据。
+
+### 节点职责与配置
+
+ROS 节点类负责 ROS 通信和生命周期，将复杂业务交给专用组件处理：`speech_input_node` 使用 `SpeechInputController` 管理唤醒、录音和识别流程；`intent_node` 使用 `IntentRules` 解析本地指令；`dialogue_node` 使用 `DialogueController` 管理对话和模型工具调用；`music_node` 使用 `MusicController` 执行音乐任务；`memory_node` 使用 `MemoryManager` 管理 SQLite 记忆和提醒。各节点的配置解析由对应的配置类完成，共享的 `NodeConfigBase` 负责 TOML 文件定位和日志配置读取。
+
+每个节点的业务配置位于 `<node_package>/config/biz_config.toml`。运行包会将它们放在 `config/<node_package>/biz_config.toml`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 指向这个配置根目录；未设置该变量时，节点从 ROS 安装的包共享目录读取配置。日志使用 spdlog，由 `common` 中的 `LogManager` 管理。默认写入 `/userdata/log/<node_name>`，单文件上限 20 MB，每天最多 3 个日志文件，保留 7 天；具体值可在节点配置的 `[logging]` 表中调整。
 
 ## 编译和运行
 
@@ -136,8 +144,10 @@ sudo bash bringup/ota/install_autostart.sh
 
 唤醒后可以说“播放晴天”“放一首歌”“暂停音乐”“继续播放”“停止播放音乐”“下一首”“上一首”。不指定歌名时搜索轻音乐。`intent_node` 发布 `MusicCommand`，用 `MusicAction` 表示动作、`query` 表示歌名或关键词；`music_node` 处理命令，点歌时会把搜索结果里后续最多 5 首可播放歌曲加入网易云队列，并循环播放队列。唤醒词会结束当前连续播放。点歌失败时本地语音提示，不请求 DeepSeek。
 
-音量范围是 0–150，启动默认为 150。RK809 DAC 在 100% 已达硬件满量程；100% 以上通过共享 ALSA `softvol` PCM 对语音和音乐一起增加数字增益，最高额外 +6 dB。唤醒提示音保留峰值余量，避免最大增益时削波；唤醒后可通过“音量调低一点”逐步调整，也可指定 150%。
+音量范围是 0–150，当前配置 `audio_io_node/config/biz_config.toml` 的启动默认值是 80，可通过 `volume_percent` 调整。RK809 DAC 在 100% 已达硬件满量程；100% 以上通过共享 ALSA `softvol` PCM 对语音和音乐一起增加数字增益，最高额外 +6 dB。唤醒应答文件 `wake_ack.wav` 的音频峰值约为 -6.2 dBFS，为最大增益留有余量。唤醒后可通过“音量调低一点”逐步调整，也可指定 150%。
 
-音乐播放时只运行唤醒和“闭嘴”检测，避免把歌曲识别成对话。叫“小蔡小蔡”或“小蔡同学”会立即停止连续播放，再播放“在的，少爷”并接收一条指令。音乐会持续循环，直到用户唤醒机器人或说“停止音乐”。语音回复和音乐共用 `plug:dmix`，普通语音回复前会暂停音乐。“闭嘴”停止音乐、取消正在搜索的请求并回到待机，下一次唤醒后才能继续操作。
+音乐播放期间，`speech_input_node` 不运行 SenseVoice 语音转写，只用 Vosk 检测唤醒词和“闭嘴”，避免把歌曲识别成对话。叫“小蔡小蔡”或“小蔡同学”会结束当前循环播放，播放配置的 `wake_ack.wav` 应答音频，然后接收一条请求；不额外播放叮声。唤醒词和请求连说也可以一次接收。收到请求后节点立即回到待唤醒状态；继续交互需要再次唤醒。唤醒后 120 秒没有检测到语音活动会自动回到待机；检测到语音活动会延长等待时间。该时长可由 `speech_input_node` 的 `inactivity_timeout_sec` 参数调整。
+
+播放期间识别器不处理“停止音乐”这类普通音乐命令；唤醒词本身会先停止循环播放，随后可以在这一轮请求中说“停止音乐”。“闭嘴”会停止当前音乐和语音播放、清空待播音频并取消正在执行的音乐或对话请求，之后需要重新唤醒。语音输出与音乐都经由共享 ALSA `softvol` PCM（底层为 `plug:dmix`）；语音开始播放时音乐会暂停。普通语音播完后不会自动恢复音乐，之后的播放、继续或切歌命令会等待语音结束再执行。
 
 `MusicState.state` 的数值在 `common/include/defination/music_state.hpp` 定义：0 停止、1 搜索中、2 播放、3 暂停、4 错误。音乐状态话题支持保留最后一条消息，语音节点重启后也能获取播放状态。歌曲能否播放取决于开放平台和账号权限，节点只选择平台标记当前账号可播放的搜索结果。
