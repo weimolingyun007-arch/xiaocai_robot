@@ -63,12 +63,12 @@ if [[ "$remote_arch" != aarch64 && "$remote_arch" != arm64 ]]; then
 fi
 remote_uid="$(run_adb shell id -u | tr -d '\r')"
 if [[ "$remote_uid" != 0 ]]; then
-  echo "ADB shell must have root access to update runtime files under /home/lckfb/Documents/xiaocai_robot." >&2
+  echo "ADB shell must have root access to migrate and update the runtime under /home/lckfb/xiaocai_robot." >&2
   exit 1
 fi
 
-remote_archive=/home/lckfb/Documents/.xiaocai_robot_runtime.tar.gz
-remote_script=/home/lckfb/Documents/.xiaocai_robot_runtime_deploy.sh
+remote_archive=/home/lckfb/.xiaocai_robot_runtime.tar.gz
+remote_script=/home/lckfb/.xiaocai_robot_runtime_deploy.sh
 expected_sha="$(sha256sum "$archive" | awk '{print $1}')"
 stamp="$(date +%Y%m%d_%H%M%S)_$$"
 remote_sha="$(run_adb shell sha256sum "$remote_archive" 2>/dev/null | awk '{print $1}' | tr -d '\r' || true)"
@@ -91,4 +91,5 @@ if ! printf '%s\n' "$remote_output" | tr -d '\r' | grep -Fxq "${marker}0"; then
 fi
 
 echo "Deployed runtime package: $archive"
-echo "If a board shell was already inside the old workspace, run: cd /home/lckfb/Documents/xiaocai_robot"
+echo "Runtime workspace: /home/lckfb/xiaocai_robot"
+echo "If a board shell was already inside the old workspace, run: cd /home/lckfb/xiaocai_robot"

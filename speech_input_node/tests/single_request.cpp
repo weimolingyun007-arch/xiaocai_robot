@@ -1,5 +1,5 @@
-#include "speech_input_node/speech_input.hpp"
-#include "xiaocai_cpp/common.hpp"
+#include "speech_input_node/speech_input_node.hpp"
+#include "common/common.hpp"
 #include <iostream>
 #include <stdexcept>
 

@@ -1,4 +1,4 @@
-#include "dialogue_node/dialogue.hpp"
+#include "dialogue_node/dialogue_node.hpp"
 #include "defination/volume_action.hpp"
 #include "defination/music_state.hpp"
 #include <ctime>
@@ -100,7 +100,7 @@ void Dialogue::chat_worker() {
       }
       if(!cancelled(job.generation))chat(job.text,facts,job.generation);
     } catch(const std::exception &e) {
-      RCLCPP_WARN(get_logger(),"Tool conversation failed: %s",e.what());
+      log_manager_.logger()->warn("Tool conversation failed: {}",e.what());
       if(!cancelled(job.generation))speak("这次处理没完成，请再叫我试一次。");
     }
   }
@@ -220,7 +220,7 @@ json Dialogue::completion(const json &messages,std::uint64_t generation) {
   curl_easy_setopt(curl,CURLOPT_NOPROGRESS,0L);curl_easy_setopt(curl,CURLOPT_XFERINFOFUNCTION,abort_transfer);curl_easy_setopt(curl,CURLOPT_XFERINFODATA,&transfer);
   const auto code=curl_easy_perform(curl);long status=0;curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&status);
   curl_slist_free_all(headers);curl_easy_cleanup(curl);
-  RCLCPP_INFO(get_logger(),"DeepSeek completion: HTTP=%ld curl=%d",status,(int)code);
+  log_manager_.logger()->info("DeepSeek completion: HTTP={} curl={}",status,(int)code);
   const auto parsed=xc::parse(response);
   if(code!=CURLE_OK||status!=200||!parsed.is_object()||!parsed.contains("choices")||!parsed["choices"].is_array()||parsed["choices"].empty())
     throw std::runtime_error("DeepSeek request failed (HTTP "+std::to_string(status)+")");
@@ -267,7 +267,7 @@ void Dialogue::chat(const std::string &text,const std::string &facts,std::uint64
         result=execute_tool(name,args,generation,music_started);executed[id]={signature,result};
       }
       ++calls_used;
-      RCLCPP_INFO(get_logger(),"Local tool: name=%s ok=%d",name.c_str(),result.value("ok",false));
+      log_manager_.logger()->info("Local tool: name={} ok={}",name,result.value("ok",false));
       messages.push_back({{"role","tool"},{"tool_call_id",id},{"content",result.dump()}});
     }
   }
@@ -281,7 +281,7 @@ void Dialogue::chat(const std::string &text,const std::string &facts,std::uint64
   bool music_playing=false;
   {std::lock_guard<std::mutex> lock(tool_mutex_);music_playing=music_state_.state==static_cast<std::uint8_t>(MusicState::Playing);}
   if(music_started&&music_playing) {
-    RCLCPP_INFO(get_logger(),"Music playing; final response received, voice acknowledgement omitted");
+    log_manager_.logger()->info("Music playing; final response received, voice acknowledgement omitted");
     publish_state(xiaocai_robot::common::RobotState::Idle);
   } else speak(answer);
 }

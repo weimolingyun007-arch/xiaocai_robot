@@ -8,7 +8,7 @@
 
 板端日志显示：“两只老虎”进入 `chat`；“播放两只老虎”进入 `music_play` 并成功播放。日志不能判断用户是否只说了歌名，或 ASR 漏掉了“播放”。之前网易云控制端错误属于执行层故障，已经单独修复，不能通过意图模型修复。
 
-本次资源快照：AArch64，MemTotal 1957 MiB，MemAvailable 406 MiB，无 swap；speech_input_node RSS 约 634 MiB，tts_node RSS 约 215 MiB。快照随负载变化，不代表峰值。项目已有 AArch64 `thirdparty/libonnxruntime.so`，后续接入需要匹配版本的 C/C++ 头文件和中文 tokenizer。
+本次资源快照：AArch64，MemTotal 1957 MiB，MemAvailable 406 MiB，无 swap；speech_input_node RSS 约 634 MiB，tts_node RSS 约 215 MiB。快照随负载变化，不代表峰值。项目已有 AArch64 `thirdparty/onnxruntime/libonnxruntime.so`，后续接入需要匹配版本的 C/C++ 头文件和中文 tokenizer。
 
 ## 候选方案
 

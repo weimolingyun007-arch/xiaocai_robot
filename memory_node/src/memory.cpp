@@ -1,4 +1,4 @@
-#include "memory_node/memory.hpp"
+#include "memory_node/memory_node.hpp"
 #include "defination/memory_operation.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <sqlite3.h>
@@ -10,16 +10,30 @@
 #include <vector>
 
 
-Memory::Memory():Node("memory_node") {
-    std::string path=declare_parameter<std::string>("db_path","/home/lckfb/Documents/xiaocai_robot/resource/memory.sqlite3");
+Memory::Memory()
+    : Node("memory_node"), memory_config_(),
+      log_manager_("memory_node", memory_config_.logging()) {
+    std::string path=declare_parameter<std::string>("db_path",memory_config_.settings().db_path);
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
     if(sqlite3_open(path.c_str(),&db_)!=SQLITE_OK)throw std::runtime_error("Cannot open memory database");
     sql("CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY,content TEXT NOT NULL UNIQUE)");
     sql("CREATE TABLE IF NOT EXISTS reminders(id INTEGER PRIMARY KEY,content TEXT NOT NULL,due_at INTEGER NOT NULL,delivered INTEGER NOT NULL DEFAULT 0)");
     sql("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
+    InitPublishers();
+    InitSubscribers();
+    InitTimers();
+  }
+
+void Memory::InitPublishers() {
     result_=create_publisher<xiaocai_msgs::msg::MemoryResult>("/xiaocai_robot/memory/result",10);
     due_=create_publisher<xiaocai_msgs::msg::Reminder>("/xiaocai_robot/reminder/due",10);
+  }
+
+void Memory::InitSubscribers() {
     sub_=create_subscription<xiaocai_msgs::msg::MemoryCommand>("/xiaocai_robot/memory/command",10,[this](xiaocai_msgs::msg::MemoryCommand::SharedPtr m){command(*m);});
+  }
+
+void Memory::InitTimers() {
     timer_=create_wall_timer(std::chrono::seconds(1),[this]{check_due();});
   }
 
@@ -61,7 +75,7 @@ void Memory::command(const xiaocai_msgs::msg::MemoryCommand &message) {
         s=prepare("SELECT value FROM settings WHERE key='quiet'");
         result.enabled=sqlite3_step(s)==SQLITE_ROW && std::string((const char*)sqlite3_column_text(s,0))=="1";
       } else throw std::runtime_error("unknown operation");
-    } catch(const std::exception &e){result.ok=false;result.error=e.what();}
+    } catch(const std::exception &e){result.ok=false;result.error=e.what();log_manager_.logger()->error("Memory command failed: {}",e.what());}
     if(s)sqlite3_finalize(s);result_->publish(result);
   }
 
@@ -78,5 +92,3 @@ void Memory::check_due() {
       due_->publish(reminder);
     }
   }
-
-int main(int argc,char**argv){rclcpp::init(argc,argv);rclcpp::spin(std::make_shared<Memory>());rclcpp::shutdown();}

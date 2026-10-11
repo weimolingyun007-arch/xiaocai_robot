@@ -22,10 +22,13 @@ cleanup() {
 trap cleanup EXIT
 
 payload="$temp_dir/xiaocai_robot"
-mkdir -p "$payload/bin" "$payload/resource" "$payload/thirdparty" "$payload/msgs" "$payload/bringup/scripts"
+mkdir -p "$payload/bin" "$payload/config" "$payload/resource" "$payload/thirdparty" "$payload/msgs" "$payload/bringup/scripts" "$payload/bringup/systemd"
 install -D -m 0644 "$workspace/audio_io_node/assets/asound.conf" "$payload/resource/audio/asound.conf"
 
 modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node)
+for module in "${modules[@]}"; do
+  install -D -m 0644 "$workspace/$module/config/biz_config.toml" "$payload/config/$module/biz_config.toml"
+done
 for module in "${modules[@]}"; do
   binary="$binary_root/$module/$module"
   if [[ ! -x "$binary" ]]; then
@@ -40,9 +43,17 @@ for module in "${modules[@]}"; do
   install -D -m 0755 "$binary" "$payload/bin/$module"
 done
 
+runtime_libraries=(
+  "$workspace/thirdparty/onnxruntime/libonnxruntime.so"
+  "$workspace/thirdparty/sherpa-onnx/libsherpa-onnx-c-api.so"
+  "$workspace/thirdparty/vosk/libvosk.so"
+)
 library_count=0
-for library in "$workspace"/thirdparty/*.so; do
-  [[ -f "$library" ]] || continue
+for library in "${runtime_libraries[@]}"; do
+  if [[ ! -f "$library" ]]; then
+    echo "Runtime dependency library not found: $library" >&2
+    exit 1
+  fi
   machine="$(readelf -h "$library" | awk -F: '/Machine:/{gsub(/^ +/,"",$2); print $2}')"
   if [[ "$machine" != AArch64 ]]; then
     echo "Expected an AArch64 dependency library, got '$machine': $library" >&2
@@ -51,8 +62,8 @@ for library in "$workspace"/thirdparty/*.so; do
   install -D -m 0755 "$library" "$payload/thirdparty/$(basename "$library")"
   library_count=$((library_count + 1))
 done
-if [[ "$library_count" -eq 0 ]]; then
-  echo "No thirdparty shared libraries found in $workspace/thirdparty." >&2
+if [[ "$library_count" -ne 3 ]]; then
+  echo "Expected all three runtime shared libraries, found $library_count." >&2
   exit 1
 fi
 
@@ -107,6 +118,7 @@ done
 for script in start_all_node.sh stop_all_node.sh; do
   install -D -m 0755 "$workspace/bringup/scripts/$script" "$payload/bringup/scripts/$script"
 done
+install -D -m 0644 "$workspace/bringup/ota/xiaocai.service" "$payload/bringup/systemd/xiaocai.service"
 
 package_name="xiaocai_robot_$(date +%Y%m%d_%H%M%S).tar.gz"
 archive="$workspace/$package_name"
@@ -122,8 +134,10 @@ BEGIN {
 {
   path=$0
   sub(/\/$/, "", path)
-  if (path == "xiaocai_robot" || path == "xiaocai_robot/bin" || path == "xiaocai_robot/resource" || path == "xiaocai_robot/resource/speech" || path == "xiaocai_robot/resource/tts" || path == "xiaocai_robot/resource/audio" || path == "xiaocai_robot/thirdparty" || path == "xiaocai_robot/msgs" || path == "xiaocai_robot/bringup" || path == "xiaocai_robot/bringup/scripts") next
+  if (path == "xiaocai_robot" || path == "xiaocai_robot/bin" || path == "xiaocai_robot/config" || path == "xiaocai_robot/resource" || path == "xiaocai_robot/resource/speech" || path == "xiaocai_robot/resource/tts" || path == "xiaocai_robot/resource/audio" || path == "xiaocai_robot/thirdparty" || path == "xiaocai_robot/msgs" || path == "xiaocai_robot/bringup" || path == "xiaocai_robot/bringup/scripts" || path == "xiaocai_robot/bringup/systemd") next
   count=split(path, part, "/")
+  if (count == 3 && part[1] == "xiaocai_robot" && part[2] == "config" && (part[3] in node)) next
+  if (count == 4 && part[1] == "xiaocai_robot" && part[2] == "config" && (part[3] in node) && part[4] == "biz_config.toml") { configs[part[3]]++; next }
   if (count == 3 && part[1] == "xiaocai_robot" && part[2] == "bin" && (part[3] in node)) {
     executable[part[3]]++
     next
@@ -132,6 +146,7 @@ BEGIN {
   if (count == 3 && part[1] == "xiaocai_robot" && part[2] == "msgs" && part[3] ~ /^libxiaocai_msgs.*\.so$/) { interface_libraries++; next }
   if (path == "xiaocai_robot/bringup/scripts/start_all_node.sh") { start_script++; next }
   if (path == "xiaocai_robot/bringup/scripts/stop_all_node.sh") { stop_script++; next }
+  if (path == "xiaocai_robot/bringup/systemd/xiaocai.service") { service_unit++; next }
   if (count >= 4 && part[1] == "xiaocai_robot" && part[2] == "resource" && (part[3] == "speech" || part[3] == "tts")) { assets++; next }
   if (path == "xiaocai_robot/resource/audio/asound.conf") { alsa_config++; next }
   print "Unexpected package entry: " path > "/dev/stderr"
@@ -139,10 +154,11 @@ BEGIN {
 }
 END {
   for (name in node) if (executable[name] != 1) { print "Missing executable: " name > "/dev/stderr"; invalid=1 }
-  if (libraries == 0 || interface_libraries == 0 || assets == 0 || alsa_config != 1 || start_script != 1 || stop_script != 1) { print "Missing runtime dependency, custom message library, asset, ALSA configuration, or script" > "/dev/stderr"; invalid=1 }
+  for (name in node) if (configs[name] != 1) { print "Missing node config: " name > "/dev/stderr"; invalid=1 }
+  if (libraries == 0 || interface_libraries == 0 || assets == 0 || alsa_config != 1 || start_script != 1 || stop_script != 1 || service_unit != 1) { print "Missing runtime dependency, custom message library, asset, ALSA configuration, bringup script, or systemd unit" > "/dev/stderr"; invalid=1 }
   if (invalid) exit 1
 }'; then
-  echo "Package must contain only node executables, runtime libraries, model assets, and bringup scripts." >&2
+  echo "Package must contain only node executables, runtime libraries, model assets, bringup scripts, and the systemd unit." >&2
   exit 1
 fi
 

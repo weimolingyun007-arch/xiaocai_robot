@@ -1,5 +1,5 @@
-#include "audio_io_node/audio_io.hpp"
-#include "xiaocai_cpp/common.hpp"
+#include "audio_io_node/audio_io_node.hpp"
+#include "common/common.hpp"
 #include "defination/volume_action.hpp"
 #include "common/mpv.hpp"
 #include <rclcpp/rclcpp.hpp>
@@ -14,17 +14,39 @@
 #include <thread>
 
 
-AudioIo::AudioIo() : Node("audio_io_node") {
-    capture_device_ = declare_parameter<std::string>("capture_device", "hw:0,0");
-    playback_device_ = declare_parameter<std::string>("playback_device", "xiaocai_speaker");
-    wake_ack_path_ = declare_parameter<std::string>("wake_ack_path",
-      "/home/lckfb/Documents/xiaocai_robot/resource/speech/wake_ack.wav");
-    volume_percent_ = declare_parameter<int>("volume_percent", 120);
-    int adc_pga_gain = declare_parameter<int>("adc_pga_gain", 9);
-    int mic_boost_gain = declare_parameter<int>("mic_boost_gain", 1);
+AudioIo::AudioIo()
+    : Node("audio_io_node"), audio_io_config_(),
+      log_manager_("audio_io_node", audio_io_config_.logging()) {
+    const auto &settings = audio_io_config_.settings();
+    capture_device_ = declare_parameter<std::string>("capture_device", settings.capture_device);
+    playback_device_ = declare_parameter<std::string>("playback_device", settings.playback_device);
+    wake_ack_path_ = declare_parameter<std::string>("wake_ack_path", settings.wake_ack_path);
+    volume_percent_ = declare_parameter<int>("volume_percent", static_cast<int>(settings.volume_percent));
+    int adc_pga_gain = declare_parameter<int>("adc_pga_gain", static_cast<int>(settings.adc_pga_gain));
+    int mic_boost_gain = declare_parameter<int>("mic_boost_gain", static_cast<int>(settings.mic_boost_gain));
+    InitPublishers();
+    InitSubscribers();
+    InitServers();
+    xc::run({"amixer", "-c", "0", "set", "Playback Path", "SPK"});
+    xc::run({"amixer", "-c", "0", "set", "Capture MIC Path", "Main Mic"});
+    make_silence();
+    // Create the shared ALSA software-gain control with an inaudible zero PCM.
+    xc::run({"aplay", "-q", "-D", playback_device_, silence_});
+    set_volume(volume_percent_);
+    xc::run({"amixer", "-c", "0", "set", "ADC PGA Gain", std::to_string(adc_pga_gain)});
+    xc::run({"amixer", "-c", "0", "set", "MIC Boost Gain", std::to_string(mic_boost_gain)});
+    make_beep();
+    capture_ = std::thread([this] { capture_loop(); });
+    playback_ = std::thread([this] { playback_loop(); });
+  }
+
+void AudioIo::InitPublishers() {
     mic_ = create_publisher<std_msgs::msg::UInt8MultiArray>("/xiaocai_robot/audio/mic", 10);
     playing_ = create_publisher<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10);
     volume_state_ = create_publisher<std_msgs::msg::Int32>("/xiaocai_robot/audio/volume/state", 10);
+  }
+
+void AudioIo::InitSubscribers() {
     play_sub_ = create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10,
       [this](xiaocai_msgs::msg::AudioPlay::SharedPtr m) {
         if (m->path == "__stop__") {
@@ -54,38 +76,31 @@ AudioIo::AudioIo() : Node("audio_io_node") {
         else if(action==xiaocai_robot::common::VolumeAction::Down) set_volume(volume_percent_-10,true);
         else if(action==xiaocai_robot::common::VolumeAction::Set) set_volume(m->percent,true);
       });
+  }
+
+void AudioIo::InitServers() {
     volume_get_service_ = create_service<xiaocai_msgs::srv::GetVolume>("/xiaocai_robot/audio/get_volume",
       [this](const std::shared_ptr<xiaocai_msgs::srv::GetVolume::Request>,
              std::shared_ptr<xiaocai_msgs::srv::GetVolume::Response> response) {
         response->percent=volume_percent_;
       });
-    xc::run({"amixer", "-c", "0", "set", "Playback Path", "SPK"});
-    xc::run({"amixer", "-c", "0", "set", "Capture MIC Path", "Main Mic"});
-    make_silence();
-    // Create the shared ALSA software-gain control with an inaudible zero PCM.
-    xc::run({"aplay", "-q", "-D", playback_device_, silence_});
-    set_volume(volume_percent_);
-    xc::run({"amixer", "-c", "0", "set", "ADC PGA Gain", std::to_string(adc_pga_gain)});
-    xc::run({"amixer", "-c", "0", "set", "MIC Boost Gain", std::to_string(mic_boost_gain)});
-    make_beep();
-    capture_ = std::thread([this] { capture_loop(); });
-    playback_ = std::thread([this] { playback_loop(); });
   }
 
 void AudioIo::set_volume(int percent,bool notify) {
     percent=std::clamp(percent,0,150);
-    int dac=percent==0?0:std::min(255,200+(percent*55+50)/100);
+    // The RK809 driver rejects writes above 252 even though its mixer advertises 255.
+    int dac=percent==0?0:std::min(252,200+(percent*52+50)/100);
     int status=xc::run({"amixer","-c","0","cset","numid=15",std::to_string(dac)+","+std::to_string(dac)});
-    if(status) {RCLCPP_ERROR(get_logger(),"Cannot set playback volume: %d",status);return;}
+    if(status) {log_manager_.logger()->error("Cannot set playback volume: {}",status);return;}
     // 100% sets the hardware DAC to full scale. Above it, add up to +6 dB in
     // the shared PCM so voice prompts and mpv music are raised together.
     const double boost_db=std::max(0,percent-100)*0.12;
     const int software_volume=static_cast<int>(std::lround((60.0+boost_db)/66.0*255.0));
     status=xc::run({"amixer","-c","0","cset","name='Xiaocai Output Gain'",
       std::to_string(software_volume)+","+std::to_string(software_volume)});
-    if(status) {RCLCPP_ERROR(get_logger(),"Cannot set software output gain: %d",status);return;}
+    if(status) {log_manager_.logger()->error("Cannot set software output gain: {}",status);return;}
     volume_percent_=percent;
-    RCLCPP_INFO(get_logger(),"Playback volume: %d%% (DAC %d)",percent,dac);
+    log_manager_.logger()->info("Playback volume: {}% (DAC {})",percent,dac);
     if(notify){std_msgs::msg::Int32 state;state.data=percent;volume_state_->publish(state);}
 }
 
@@ -161,7 +176,7 @@ void AudioIo::playback_loop() {
        if(stop_) break; path=queue_.front(); queue_.pop_front();}
       if (silenced_.load()) continue;
       if(path=="__beep__") path=beep_;
-      if(access(path.c_str(),R_OK)!=0) {RCLCPP_ERROR(get_logger(),"Missing audio file: %s",path.c_str()); continue;}
+      if(access(path.c_str(),R_OK)!=0) {log_manager_.logger()->error("Missing audio file: {}",path); continue;}
       std_msgs::msg::Bool state; state.data=true; playing_->publish(state);
       // Pause music synchronously before the wake response, ding or spoken reply.
       xiaocai_robot::common::mpv_command({"set_property", "pause", true});
@@ -184,11 +199,9 @@ void AudioIo::playback_loop() {
           status=WIFEXITED(child_status)?WEXITSTATUS(child_status):-1;
         }
       }
-      if(status&&!silenced_.load()) RCLCPP_ERROR(get_logger(),"aplay failed: %d",status);
+      if(status&&!silenced_.load()) log_manager_.logger()->error("aplay failed: {}",status);
       if(path.find("/tmp/xiaocai_tts/")==0) unlink(path.c_str());
       std::this_thread::sleep_for(std::chrono::milliseconds(250));
       state.data=false; playing_->publish(state);
     }
   }
-
-int main(int argc,char**argv){rclcpp::init(argc,argv);rclcpp::spin(std::make_shared<AudioIo>());rclcpp::shutdown();}

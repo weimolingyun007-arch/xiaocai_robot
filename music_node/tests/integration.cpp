@@ -1,6 +1,6 @@
 #include "common/mpv.hpp"
 #include "defination/music_state.hpp"
-#include "xiaocai_cpp/common.hpp"
+#include "common/common.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <xiaocai_msgs/msg/audio_play.hpp>
 #include <xiaocai_msgs/msg/intent.hpp>
@@ -40,7 +40,7 @@ int main(int argc,char **argv) {
   int result=0;
   try {
     wait([&]{return received&&text->get_subscription_count()>0&&audio->get_subscription_count()>1;},10,"node discovery");
-    play_audio("/home/lckfb/Documents/xiaocai_robot/resource/speech/wake_ack.wav");hold(2);
+    play_audio("/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav");hold(2);
     command("播放晴天","music_play");
     wait([&]{return is(State::Playing)&&state.position_seconds>1;},65,"search, playback and advancing position");
     hold(12);
@@ -52,8 +52,8 @@ int main(int argc,char **argv) {
     auto ao=xiaocai_robot::common::mpv_command({"get_property","current-ao"});
     if(!xiaocai_robot::common::mpv_ok(ao)||ao.value("data",std::string{})!="alsa")throw std::runtime_error("ALSA audio output was not active");
     std::cout<<"PASS: real ALSA audio output"<<std::endl;
-    play_audio("/home/lckfb/Documents/xiaocai_robot/resource/speech/wake_ack.wav");
-    wait([&]{return is(State::Paused);},4,"wake response pauses music");hold(2);
+    play_audio("/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav");
+    wait([&]{return is(State::Stopped);},4,"wake response ends continuous music");hold(2);
     command("暂停音乐","music_pause");
     wait([&]{return is(State::Paused);},3,"pause");
     const auto position=state.position_seconds;hold(1.5);

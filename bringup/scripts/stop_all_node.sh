@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-workspace=/home/lckfb/Documents/xiaocai_robot
+workspace=/home/lckfb/xiaocai_robot
 if [ "$(id -u)" -eq 0 ]; then
   exec su -l lckfb -c "cd $workspace && bash bringup/scripts/stop_all_node.sh"
 fi

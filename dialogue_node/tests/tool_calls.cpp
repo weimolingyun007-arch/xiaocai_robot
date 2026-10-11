@@ -1,4 +1,4 @@
-#include "dialogue_node/dialogue.hpp"
+#include "dialogue_node/dialogue_node.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <functional>

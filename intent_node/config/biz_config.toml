@@ -1,0 +1,12 @@
+[logging]
+# Relative paths are resolved under HOME. '~' expands to the current user's home directory.
+directory = "/userdata/log/intent_node"
+level = "info"
+pattern = "%Y-%m-%d %H:%M:%S.%e [%^%l%$] [%n] %v"
+console = true
+
+# Log files are stored directly in directory, named node_YYYYMMDD_HHMMSS.log.
+# Rotated files use .1.log and .2.log suffixes; the daily maximum includes the active file.
+max_file_size_mb = 20
+max_files_per_day = 3
+retention_days = 7

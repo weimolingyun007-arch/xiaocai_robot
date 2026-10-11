@@ -1,5 +1,5 @@
-#include "dialogue_node/dialogue.hpp"
-#include "xiaocai_cpp/common.hpp"
+#include "dialogue_node/dialogue_node.hpp"
+#include "common/common.hpp"
 #include "defination/volume_action.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -9,15 +9,30 @@
 
 
 
-Dialogue::Dialogue():Node("dialogue_node") {
-    api_url_=declare_parameter<std::string>("api_url","https://api.deepseek.com/chat/completions");
-    model_=declare_parameter<std::string>("model","deepseek-flash");
+Dialogue::Dialogue()
+    : Node("dialogue_node"), dialogue_config_(),
+      log_manager_("dialogue_node", dialogue_config_.logging()) {
+    const auto &settings = dialogue_config_.settings();
+    api_url_=declare_parameter<std::string>("api_url",settings.api_url);
+    model_=declare_parameter<std::string>("model",settings.model);
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    InitPublishers();
+    InitSubscribers();
+    InitClients();
+    InitTimers();
+    publish_state(xiaocai_robot::common::RobotState::Idle);
+    worker_=std::thread([this]{chat_worker();});
+  }
+
+void Dialogue::InitPublishers() {
     tts_=create_publisher<std_msgs::msg::String>("/xiaocai_robot/tts/text",10);
     state_=create_publisher<xiaocai_msgs::msg::RobotState>("/xiaocai_robot/state",10);
     memory_=create_publisher<xiaocai_msgs::msg::MemoryCommand>("/xiaocai_robot/memory/command",10);
     volume_command_=create_publisher<xiaocai_msgs::msg::VolumeCommand>("/xiaocai_robot/audio/volume/command",10);
     music_command_=create_publisher<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent",10);
+  }
+
+void Dialogue::InitSubscribers() {
     intent_sub_=create_subscription<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent",10,[this](xiaocai_msgs::msg::Intent::SharedPtr m){on_intent(*m);});
     result_sub_=create_subscription<xiaocai_msgs::msg::MemoryResult>("/xiaocai_robot/memory/result",10,[this](xiaocai_msgs::msg::MemoryResult::SharedPtr m){on_result(*m);});
     due_sub_=create_subscription<xiaocai_msgs::msg::Reminder>("/xiaocai_robot/reminder/due",10,[this](xiaocai_msgs::msg::Reminder::SharedPtr m){on_due(*m);});
@@ -28,14 +43,18 @@ Dialogue::Dialogue():Node("dialogue_node") {
         {std::lock_guard<std::mutex> lock(tool_mutex_);
          if(tool_volume_pending_){tool_volume_result_={{"ok",true},{"percent",m->data}};tool_cv_.notify_all();return;}}
         if(m->data>0)speak("音量调到百分之"+std::to_string(m->data)+"。");else publish_state(xiaocai_robot::common::RobotState::Muted);});
-    volume_get_client_=create_client<xiaocai_msgs::srv::GetVolume>("/xiaocai_robot/audio/get_volume");
-    timer_=create_wall_timer(std::chrono::seconds(3),[this]{if(!loaded_)request(xiaocai_robot::common::MemoryOperation::GetQuiet);});
     music_sub_=create_subscription<xiaocai_msgs::msg::MusicState>("/xiaocai_robot/music/state",rclcpp::QoS(1).transient_local(),
       [this](xiaocai_msgs::msg::MusicState::SharedPtr m){std::lock_guard<std::mutex> lock(tool_mutex_);music_state_=*m;++music_sequence_;tool_cv_.notify_all();});
     interrupt_sub_=create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play",10,
       [this](xiaocai_msgs::msg::AudioPlay::SharedPtr m){if(m->path=="__stop__"){hushed_=true;++generation_;tool_cv_.notify_all();}});
-    publish_state(xiaocai_robot::common::RobotState::Idle);
-    worker_=std::thread([this]{chat_worker();});
+  }
+
+void Dialogue::InitClients() {
+    volume_get_client_=create_client<xiaocai_msgs::srv::GetVolume>("/xiaocai_robot/audio/get_volume");
+  }
+
+void Dialogue::InitTimers() {
+    timer_=create_wall_timer(std::chrono::seconds(3),[this]{if(!loaded_)request(xiaocai_robot::common::MemoryOperation::GetQuiet);});
   }
 
 Dialogue::~Dialogue() {stopping_=true;tool_cv_.notify_all();if(worker_.joinable())worker_.join();curl_global_cleanup();}
@@ -130,7 +149,3 @@ void Dialogue::on_due(const xiaocai_msgs::msg::Reminder &message) {
     if(quiet_)held_.push_back(message.content);
     else speak("提醒你，"+message.content);
   }
-
-#ifndef XIAOCAI_DIALOGUE_TEST
-int main(int argc,char**argv){rclcpp::init(argc,argv);rclcpp::spin(std::make_shared<Dialogue>());rclcpp::shutdown();}
-#endif

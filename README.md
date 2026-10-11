@@ -83,13 +83,13 @@ make ota
 make deploy
 ```
 
-`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。七个可执行文件集中在 `bin/`；语音模型和唤醒提示音分别放在 `resource/speech/`、`resource/tts/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。`bringup/` 只包含启停脚本。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
+`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。七个可执行文件集中在 `bin/`；七个节点的 `biz_config.toml` 放在 `config/<节点名>/`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 加载；语音模型和唤醒提示音分别放在 `resource/speech/`、`resource/tts/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。`bringup/` 包含启停脚本和 systemd 服务单元。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
 
-`make deploy` 调用 ADB 部署脚本，将最新压缩包传到板端 `/home/lckfb/Documents/xiaocai_robot`，替换整个运行目录并重启服务；它不会重新编译或打包。板端运行目录包含 `bin/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。
+`make deploy` 调用 ADB 部署脚本，将最新压缩包传到板端 `/home/lckfb/xiaocai_robot`，替换整个运行目录并重启服务；它不会重新编译或打包。板端运行目录包含 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。
 
-部署脚本通过 ADB 校验压缩包后停止服务，将原工作目录移到隐藏备份，再替换运行目录。它从旧目录复制密钥与数据库到新版的 `resource/`，并保留其内容；这两个运行数据文件不包含在压缩包中。部署失败会恢复原工作目录。ADB shell 需要有 root 权限。成功部署后，上一版目录保存在 `/home/lckfb/Documents/.xiaocai_robot_runtime_backup_时间`，脚本只保留最近一份备份。
+部署脚本通过 ADB 校验压缩包后停止服务，将原工作目录移到隐藏备份，再替换运行目录并安装新的 systemd 服务单元。它从旧目录复制密钥与数据库到新版的 `resource/`，并保留其内容；这两个运行数据文件不包含在压缩包中。部署失败会恢复原工作目录和服务单元。首次迁移时，运行目录从 `/home/lckfb/Documents/xiaocai_robot` 移到 `/home/lckfb/xiaocai_robot`。ADB shell 需要有 root 权限。成功部署后，上一版目录保存在 `/home/lckfb/.xiaocai_robot_runtime_backup_时间`，脚本只保留最近一份备份。
 
-如果部署前已经在板端 shell 中进入旧工作目录，部署后该 shell 仍停留在被移动的备份目录；执行 `cd /home/lckfb/Documents/xiaocai_robot` 后再运行 `ls`，才能查看新运行目录。
+如果部署前已经在板端 shell 中进入旧工作目录，部署后该 shell 仍停留在被移动的备份目录；执行 `cd /home/lckfb/xiaocai_robot` 后再运行 `ls`，才能查看新运行目录。
 
 停止全部节点：
 
@@ -131,10 +131,10 @@ sudo bash bringup/ota/install_autostart.sh
 
 板端需已安装 `/usr/local/bin/ncm-cli`（官方 `@music163/ncm-cli`）及 `mpv`，并在 `lckfb` 用户下配置开放平台凭证和扫码登录。CLI 运行时安装在 `/opt/ncm-cli`，账号配置位于 `/home/lckfb/.config/ncm-cli/`，更新机器人运行包时会保留。机器人依赖的 CLI、mpv 与 ROS 2 一样由板端预先安装。
 
-唤醒后可以说“播放晴天”“放一首歌”“暂停音乐”“继续播放”“停止播放音乐”“下一首”“上一首”。不指定歌名时搜索轻音乐。`intent_node` 发布 `music_play`、`music_pause`、`music_resume`、`music_stop`、`music_next` 或 `music_previous` 意图，歌名放在 `Intent.content`。`music_node` 处理这些意图，`dialogue_node` 跳过音乐意图。正常点歌用收到语音时的叮声确认；失败时本地语音提示，不请求 DeepSeek。
+唤醒后可以说“播放晴天”“放一首歌”“暂停音乐”“继续播放”“停止播放音乐”“下一首”“上一首”。不指定歌名时搜索轻音乐。`intent_node` 发布 `music_play`、`music_pause`、`music_resume`、`music_stop`、`music_next` 或 `music_previous` 意图，歌名放在 `Intent.content`。`music_node` 处理这些意图，点歌时会把搜索结果里后续最多 5 首可播放歌曲加入网易云队列，并循环播放队列。唤醒词会结束当前连续播放。`dialogue_node` 跳过音乐意图。正常点歌用收到语音时的叮声确认；失败时本地语音提示，不请求 DeepSeek。
 
-音量范围是 0–150，启动默认为 120。RK809 DAC 在 100% 已达硬件满量程；100% 以上通过共享 ALSA `softvol` PCM 对语音和音乐一起增加数字增益，最高额外 +6 dB。数字增益过高可能令峰值削波，因此默认使用 120%；唤醒后可通过“音量再大一点”逐步调整，也可指定 150%。
+音量范围是 0–150，启动默认为 150。RK809 DAC 在 100% 已达硬件满量程；100% 以上通过共享 ALSA `softvol` PCM 对语音和音乐一起增加数字增益，最高额外 +6 dB。唤醒提示音保留峰值余量，避免最大增益时削波；唤醒后可通过“音量调低一点”逐步调整，也可指定 150%。
 
-音乐播放时只运行唤醒和“闭嘴”检测，避免把歌曲识别成对话。叫“小蔡小蔡”或“小蔡同学”会先暂停音乐，再播放“在的，少爷”并接收一条指令。接收请求后回到待机；要恢复音乐，需要再次唤醒后说“继续播放”。语音回复和音乐共用 `plug:dmix`，回复前通过 [mpv JSON IPC](https://mpv.io/manual/stable/#json-ipc) 暂停音乐。“闭嘴”停止音乐、取消正在搜索的请求并回到待机，下一次唤醒后才能继续操作。
+音乐播放时只运行唤醒和“闭嘴”检测，避免把歌曲识别成对话。叫“小蔡小蔡”或“小蔡同学”会立即停止连续播放，再播放“在的，少爷”并接收一条指令。音乐会持续循环，直到用户唤醒机器人或说“停止音乐”。语音回复和音乐共用 `plug:dmix`，普通语音回复前会暂停音乐。“闭嘴”停止音乐、取消正在搜索的请求并回到待机，下一次唤醒后才能继续操作。
 
 `MusicState.state` 的数值在 `common/include/defination/music_state.hpp` 定义：0 停止、1 搜索中、2 播放、3 暂停、4 错误。音乐状态话题支持保留最后一条消息，语音节点重启后也能获取播放状态。歌曲能否播放取决于开放平台和账号权限，节点只选择平台标记当前账号可播放的搜索结果。

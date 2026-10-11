@@ -1,0 +1,16 @@
+[logging]
+directory = "/userdata/log/audio_io_node"
+level = "info"
+pattern = "%Y-%m-%d %H:%M:%S.%e [%^%l%$] [%n] %v"
+console = true
+max_file_size_mb = 20
+max_files_per_day = 3
+retention_days = 7
+
+[audio_io]
+capture_device = "hw:0,0"
+playback_device = "xiaocai_speaker"
+wake_ack_path = "/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"
+volume_percent = 80
+adc_pga_gain = 9
+mic_boost_gain = 1

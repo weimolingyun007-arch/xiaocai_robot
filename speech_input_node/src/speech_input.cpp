@@ -1,5 +1,5 @@
-#include "speech_input_node/speech_input.hpp"
-#include "xiaocai_cpp/common.hpp"
+#include "speech_input_node/speech_input_node.hpp"
+#include "common/common.hpp"
 #include "common/mpv.hpp"
 #include "defination/music_state.hpp"
 #include <algorithm>
@@ -84,23 +84,25 @@ size_t wake_alias_prefix_size(const std::string &text) {
 }
 }
 
-SpeechInput::SpeechInput() : Node("speech_input_node") {
-  const std::string base = "/home/lckfb/Documents/xiaocai_robot/resource/speech/";
+SpeechInput::SpeechInput()
+    : Node("speech_input_node"), speech_input_config_(),
+      log_manager_("speech_input_node", speech_input_config_.logging()) {
+  const auto &settings = speech_input_config_.settings();
   const auto wake_path = declare_parameter<std::string>(
-    "wake_model_path", base + "vosk-model-small-cn-0.22");
+    "wake_model_path", settings.wake_model_path);
   const auto model_path = declare_parameter<std::string>(
-    "sense_model_path", base + "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx");
+    "sense_model_path", settings.sense_model_path);
   const auto tokens_path = declare_parameter<std::string>(
-    "sense_tokens_path", base + "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt");
+    "sense_tokens_path", settings.sense_tokens_path);
   const auto vad_path = declare_parameter<std::string>(
-    "vad_model_path", base + "silero_vad.onnx");
-  wake_ack_path_ = declare_parameter<std::string>("wake_ack_path", base + "wake_ack.wav");
+    "vad_model_path", settings.vad_model_path);
+  wake_ack_path_ = declare_parameter<std::string>("wake_ack_path", settings.wake_ack_path);
   wake_ack_ding_path_ = declare_parameter<std::string>(
-    "wake_ack_ding_path", base + "wake_ack_ding.wav");
-  const double gain = declare_parameter<double>("input_gain", 6.0);
+    "wake_ack_ding_path", settings.wake_ack_ding_path);
+  const double gain = declare_parameter<double>("input_gain", settings.input_gain);
   if (gain <= 0 || gain > 30) throw std::runtime_error("input_gain must be in (0, 30]");
   input_gain_ = static_cast<float>(gain);
-  inactivity_timeout_sec_ = declare_parameter<double>("inactivity_timeout_sec", 120.0);
+  inactivity_timeout_sec_ = declare_parameter<double>("inactivity_timeout_sec", settings.inactivity_timeout_sec);
   if (inactivity_timeout_sec_ < 1.0)
     throw std::runtime_error("inactivity_timeout_sec must be at least 1");
 
@@ -137,9 +139,20 @@ SpeechInput::SpeechInput() : Node("speech_input_node") {
   vad_ = SherpaOnnxCreateVoiceActivityDetector(&vad_config, 30.f);
   if (!vad_) throw std::runtime_error("Cannot load Silero VAD: " + vad_path);
 
+  InitPublishers();
+  InitSubscribers();
+  InitTimers();
+  decoder_ = std::thread([this] { decode_loop(); });
+  log_manager_.logger()->info("Wake-only standby ready; SenseVoice runs after wake detection");
+}
+
+void SpeechInput::InitPublishers() {
   text_ = create_publisher<std_msgs::msg::String>("/xiaocai_robot/speech/text", 10);
   awake_ = create_publisher<std_msgs::msg::Bool>("/xiaocai_robot/speech/awake", 10);
   play_ = create_publisher<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10);
+}
+
+void SpeechInput::InitSubscribers() {
   mic_sub_ = create_subscription<std_msgs::msg::UInt8MultiArray>("/xiaocai_robot/audio/mic", 10,
     [this](std_msgs::msg::UInt8MultiArray::SharedPtr m) { on_audio(*m); });
   playing_sub_ = create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10,
@@ -156,9 +169,10 @@ SpeechInput::SpeechInput() : Node("speech_input_node") {
       segments_.clear();
       results_.clear();
     });
+}
+
+void SpeechInput::InitTimers() {
   result_timer_ = create_wall_timer(std::chrono::milliseconds(50), [this] { drain_results(); });
-  decoder_ = std::thread([this] { decode_loop(); });
-  RCLCPP_INFO(get_logger(), "Wake-only standby ready; SenseVoice runs after wake detection");
 }
 
 SpeechInput::~SpeechInput() {
@@ -227,7 +241,7 @@ void SpeechInput::on_audio(const std_msgs::msg::UInt8MultiArray &m) {
       const auto phrase = !result.is_object() ? std::string{} :
         compact_text(result.value("text", std::string{}));
       if (is_hush_command(phrase)) {
-        RCLCPP_INFO(get_logger(), "hush command detected during playback: %s", phrase.c_str());
+        log_manager_.logger()->info("hush command detected during playback: {}", phrase);
         return_to_wake_only();
       } else if (music_playing_ && !playing_ && exact_wake_phrase(phrase) &&
                  xc::monotonic() - last_wake_time_ > 2.0) {
@@ -272,7 +286,7 @@ void SpeechInput::on_audio(const std_msgs::msg::UInt8MultiArray &m) {
       armed_until_ = now + inactivity_timeout_sec_;
     } else if (now >= armed_until_) {
       enter_standby();
-      RCLCPP_INFO(get_logger(), "No request for %.0f seconds; wake-only standby",
+      log_manager_.logger()->info("No request for {:.0f} seconds; wake-only standby",
         inactivity_timeout_sec_);
     }
   }
@@ -282,13 +296,12 @@ void SpeechInput::on_audio(const std_msgs::msg::UInt8MultiArray &m) {
     const auto phrase = !result.is_object() ? std::string{} :
       compact_text(result.value("text", std::string{}));
     if (is_hush_command(phrase) && armed_until_ > xc::monotonic()) {
-      RCLCPP_INFO(get_logger(), "hush command detected: %s", phrase.c_str());
+      log_manager_.logger()->info("hush command detected: {}", phrase);
       return_to_wake_only();
       return;
     }
     if (exact_wake_phrase(phrase) && xc::monotonic() - last_wake_time_ > 2.0) {
-      RCLCPP_INFO(get_logger(), "wake phrase detected by grammar: %s",
-        phrase.c_str());
+      log_manager_.logger()->info("wake phrase detected by grammar: {}", phrase);
       SherpaOnnxVoiceActivityDetectorReset(vad_);
       vad_pending_.clear();
       recent_samples_.clear();
@@ -329,8 +342,8 @@ void SpeechInput::decode_loop() {
     SherpaOnnxDecodeOfflineStream(asr_, stream);
     const auto *result = SherpaOnnxGetOfflineStreamResult(stream);
     const auto heard = result && result->text ? compact_text(result->text) : std::string{};
-    RCLCPP_INFO(get_logger(), "SenseVoice heard: %s (%.2f s decode)",
-      heard.c_str(), xc::monotonic() - began);
+    log_manager_.logger()->info("SenseVoice heard: {} ({:.2f} s decode)",
+      heard, xc::monotonic() - began);
     {
       std::lock_guard<std::mutex> lock(queue_mutex_);
       results_.push_back({heard, segment.was_armed, segment.generation});
@@ -383,7 +396,7 @@ void SpeechInput::handle_text(const std::string &heard, bool was_armed) {
       if (alias_size > 0) {
         command = strip_wakeword_tail(heard.substr(alias_size));
         if (command.empty()) {
-          RCLCPP_INFO(get_logger(), "ignored duplicate ASR wake phrase: %s", heard.c_str());
+          log_manager_.logger()->info("ignored duplicate ASR wake phrase: {}", heard);
           return;
         }
       }
@@ -393,7 +406,8 @@ void SpeechInput::handle_text(const std::string &heard, bool was_armed) {
 }
 
 void SpeechInput::acknowledge_wake() {
-  xiaocai_robot::common::mpv_command({"set_property", "pause", true});
+  // A wake word explicitly ends the current music session.
+  xiaocai_robot::common::mpv_command({"stop"});
   music_playing_ = false;
   armed_until_ = xc::monotonic() + inactivity_timeout_sec_;
   last_wake_time_ = xc::monotonic();
@@ -411,14 +425,14 @@ void SpeechInput::acknowledge_wake() {
   xiaocai_msgs::msg::AudioPlay play;
   play.path=wake_ack_path_;
   play_->publish(play);
-  RCLCPP_INFO(get_logger(), "wakeword acknowledged");
+  log_manager_.logger()->info("wakeword acknowledged");
 }
 
 void SpeechInput::acknowledge_input() {
   xiaocai_msgs::msg::AudioPlay play;
   play.path = wake_ack_ding_path_;
   play_->publish(play);
-  RCLCPP_INFO(get_logger(), "accepted speech; acknowledgement beep queued");
+  log_manager_.logger()->info("accepted speech; acknowledgement beep queued");
 }
 
 void SpeechInput::enter_standby() {
@@ -442,7 +456,7 @@ void SpeechInput::accept_request(const std::string &text) {
   enter_standby();
   acknowledge_input();
   text_->publish(xc::str(text));
-  RCLCPP_INFO(get_logger(), "Single request accepted; waiting for the next wake word");
+  log_manager_.logger()->info("Single request accepted; waiting for the next wake word");
 }
 
 void SpeechInput::return_to_wake_only() {
@@ -452,13 +466,5 @@ void SpeechInput::return_to_wake_only() {
   xiaocai_msgs::msg::AudioPlay stop;
   stop.path = "__stop__";
   play_->publish(stop);
-  RCLCPP_INFO(get_logger(), "Hush command received; waiting for the next wake word");
+  log_manager_.logger()->info("Hush command received; waiting for the next wake word");
 }
-
-#ifndef XIAOCAI_SPEECH_INPUT_TEST
-int main(int argc, char **argv) {
-  rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<SpeechInput>());
-  rclcpp::shutdown();
-}
-#endif

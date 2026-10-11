@@ -3,4 +3,4 @@
 <description>Xiao Cai tts node</description>
 <maintainer email="cmx@example.com">cmx</maintainer><license>MIT</license>
 <buildtool_depend>ament_cmake</buildtool_depend>
-<depend>rclcpp</depend><depend>std_msgs</depend><depend>xiaocai_msgs</depend></package>
+<depend>ament_index_cpp</depend><depend>rclcpp</depend><depend>std_msgs</depend><depend>xiaocai_msgs</depend></package>

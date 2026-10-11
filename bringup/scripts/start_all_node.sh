@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-workspace=/home/lckfb/Documents/xiaocai_robot
+workspace=/home/lckfb/xiaocai_robot
 if [ "$(id -u)" -eq 0 ]; then
   exec su -l lckfb -c "cd $workspace && bash bringup/scripts/start_all_node.sh"
 fi
@@ -11,8 +11,9 @@ export HOME="${HOME:-/home/lckfb}"
 export ROS_LOG_DIR="${ROS_LOG_DIR:-/tmp/xiaocai_ros_logs}"
 mkdir -p "$ROS_LOG_DIR"
 source /opt/ros/humble/setup.bash
-export LD_LIBRARY_PATH="$workspace/msgs:$workspace/thirdparty:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$workspace/msgs:$workspace/thirdparty/onnxruntime:$workspace/thirdparty/sherpa-onnx:$workspace/thirdparty/vosk:$workspace/thirdparty:${LD_LIBRARY_PATH:-}"
 export ALSA_CONFIG_PATH="$workspace/resource/audio/asound.conf"
+export XIAOCAI_CONFIG_ROOT="$workspace/config"
 source "$workspace/resource/deepseek.env"
 
 log_dir="${XIAOCAI_LOG_DIR:-/tmp/xiaocai_logs}"

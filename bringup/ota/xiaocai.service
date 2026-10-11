@@ -7,12 +7,12 @@ After=network-online.target
 Type=simple
 User=lckfb
 Group=lckfb
-WorkingDirectory=/home/lckfb/Documents/xiaocai_robot
+WorkingDirectory=/home/lckfb/xiaocai_robot
 Environment=HOME=/home/lckfb
 Environment=ROS_LOG_DIR=/tmp/xiaocai_ros_logs
 Environment=XIAOCAI_LOG_DIR=/tmp/xiaocai_logs
-ExecStart=/bin/bash /home/lckfb/Documents/xiaocai_robot/bringup/scripts/start_all_node.sh
-ExecStop=/bin/bash /home/lckfb/Documents/xiaocai_robot/bringup/scripts/stop_all_node.sh
+ExecStart=/bin/bash /home/lckfb/xiaocai_robot/bringup/scripts/start_all_node.sh
+ExecStop=/bin/bash /home/lckfb/xiaocai_robot/bringup/scripts/stop_all_node.sh
 Restart=always
 RestartSec=5
 KillMode=mixed

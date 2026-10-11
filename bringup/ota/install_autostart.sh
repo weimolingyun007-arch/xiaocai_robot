@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workspace=/home/lckfb/Documents/xiaocai_robot
+workspace=/home/lckfb/xiaocai_robot
 unit_name=xiaocai.service
-unit_source="$workspace/bringup/ota/$unit_name"
+unit_source="$workspace/bringup/systemd/$unit_name"
 unit_target="/etc/systemd/system/$unit_name"
 
 if [ "$(id -u)" -ne 0 ]; then
