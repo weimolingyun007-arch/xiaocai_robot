@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<package format="3"><name>intent_node</name><version>0.1.0</version>
+<description>Xiao Cai intent node</description>
+<maintainer email="cmx@example.com">cmx</maintainer><license>MIT</license>
+<buildtool_depend>ament_cmake</buildtool_depend>
+<depend>rclcpp</depend><depend>std_msgs</depend><depend>xiaocai_msgs</depend></package>

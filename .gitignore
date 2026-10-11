@@ -1,0 +1,10 @@
+/build/
+/xiaocai_robot_*.tar.gz
+# Large downloaded model weights (keep locally; fetch separately when needed)
+/speech_input_node/assets/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx
+/speech_input_node/assets/vosk-model-small-cn-0.22/
+/speech_input_node/assets/silero_vad.onnx
+/tts_node/assets/sherpa-onnx-vits-zh-ll/model.onnx
+
+# Local API credentials
+/dialogue_node/.secrets/
