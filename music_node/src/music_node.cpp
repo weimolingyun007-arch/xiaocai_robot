@@ -63,7 +63,7 @@ int connect_unix(const std::string &path) {
 }
 }
 
-Music::Music()
+MusicNode::MusicNode()
     : Node("music_node"), music_config_(),
       log_manager_("music_node", music_config_.logging()) {
   const auto &settings = music_config_.settings();
@@ -80,13 +80,13 @@ Music::Music()
   log_manager_.logger()->info("NetEase voice music ready; CLI: {}", cli_path_);
 }
 
-void Music::InitPublishers() {
+void MusicNode::InitPublishers() {
   state_ = create_publisher<xiaocai_msgs::msg::MusicState>("/xiaocai_robot/music/state",
     rclcpp::QoS(1).transient_local());
   tts_ = create_publisher<std_msgs::msg::String>("/xiaocai_robot/tts/text", 10);
 }
 
-void Music::InitSubscribers() {
+void MusicNode::InitSubscribers() {
   intent_sub_ = create_subscription<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent", 10,
     [this](xiaocai_msgs::msg::Intent::SharedPtr message) { on_intent(*message); });
   play_sub_ = create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10,
@@ -98,11 +98,11 @@ void Music::InitSubscribers() {
     });
 }
 
-void Music::InitTimers() {
+void MusicNode::InitTimers() {
   timer_ = create_wall_timer(std::chrono::milliseconds(500), [this] { update_state(); });
 }
 
-Music::~Music() {
+MusicNode::~MusicNode() {
   stop_ = true;
   ++revision_;
   ready_.notify_all();
@@ -111,11 +111,11 @@ Music::~Music() {
   close_backend();
 }
 
-bool Music::current(std::uint64_t revision) const {
+bool MusicNode::current(std::uint64_t revision) const {
   return !stop_ && !silenced_ && revision_.load() == revision;
 }
 
-void Music::on_audio_play(const std::string &path) {
+void MusicNode::on_audio_play(const std::string &path) {
   if (path == "__stop__") {
     silenced_ = true;
     ++revision_;
@@ -140,7 +140,7 @@ void Music::on_audio_play(const std::string &path) {
   }
 }
 
-void Music::on_intent(const xiaocai_msgs::msg::Intent &message) {
+void MusicNode::on_intent(const xiaocai_msgs::msg::Intent &message) {
   if (message.intent.rfind("music_", 0) != 0 || silenced_) return;
   const auto revision = ++revision_;
   if (message.intent == "music_stop" || message.intent == "music_pause") {
@@ -152,10 +152,10 @@ void Music::on_intent(const xiaocai_msgs::msg::Intent &message) {
     jobs_.push_back({message.intent, message.content, revision, message.request_id});
   }
   ready_.notify_one();
-  log_manager_.logger()->info("Music intent: {}; query: {}", message.intent, message.content);
+  log_manager_.logger()->info("MusicNode intent: {}; query: {}", message.intent, message.content);
 }
 
-void Music::set_state(State state, const std::string &error,const std::string &request_id) {
+void MusicNode::set_state(State state, const std::string &error,const std::string &request_id) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   state_message_.state = static_cast<std::uint8_t>(state);
   state_message_.error = error;
@@ -163,7 +163,7 @@ void Music::set_state(State state, const std::string &error,const std::string &r
   state_->publish(state_message_);
 }
 
-void Music::update_state() {
+void MusicNode::update_state() {
   using namespace xiaocai_robot::common;
   maintain_backend();
   auto idle = mpv_command({"get_property", "idle-active"}, socket_path_);
@@ -190,7 +190,7 @@ void Music::update_state() {
   state_->publish(state_message_);
 }
 
-bool Music::ensure_backend(std::uint64_t revision) {
+bool MusicNode::ensure_backend(std::uint64_t revision) {
   std::lock_guard<std::mutex> lock(backend_mutex_);
   if (backend_fd_ >= 0) return true;
 
@@ -222,7 +222,7 @@ bool Music::ensure_backend(std::uint64_t revision) {
   return false;
 }
 
-void Music::maintain_backend() {
+void MusicNode::maintain_backend() {
   std::lock_guard<std::mutex> lock(backend_mutex_);
   if (backend_fd_ < 0) return;
   char buffer[4096];
@@ -238,13 +238,13 @@ void Music::maintain_backend() {
   }
 }
 
-void Music::close_backend() {
+void MusicNode::close_backend() {
   std::lock_guard<std::mutex> lock(backend_mutex_);
   if (backend_fd_ >= 0) ::close(backend_fd_);
   backend_fd_ = -1;
 }
 
-Music::Result Music::cli(const std::vector<std::string> &arguments, std::uint64_t revision) {
+MusicNode::Result MusicNode::cli(const std::vector<std::string> &arguments, std::uint64_t revision) {
   int output[2];
   if (pipe2(output, O_CLOEXEC) != 0) return {};
   std::vector<std::string> args{cli_path_};
@@ -301,7 +301,7 @@ Music::Result Music::cli(const std::vector<std::string> &arguments, std::uint64_
   return {!cancelled && WIFEXITED(status) && WEXITSTATUS(status) == 0, data, text};
 }
 
-bool Music::wait_for_speech(std::uint64_t revision) {
+bool MusicNode::wait_for_speech(std::uint64_t revision) {
   const double until = xc::monotonic() + 20;
   while (current(revision) && xc::monotonic() < until) {
     if (!voice_playing_ && xc::monotonic() - last_voice_at_.load() > 0.5) return true;
@@ -310,14 +310,14 @@ bool Music::wait_for_speech(std::uint64_t revision) {
   return false;
 }
 
-void Music::fail(const Job &job, const std::string &message) {
+void MusicNode::fail(const Job &job, const std::string &message) {
   if (!current(job.revision)) return;
   set_state(State::Error, message,job.request_id);
   if(job.request_id.empty())tts_->publish(xc::str(message));
   log_manager_.logger()->warn("{}", message);
 }
 
-void Music::execute(const Job &job) {
+void MusicNode::execute(const Job &job) {
   using namespace xiaocai_robot::common;
   if (job.intent == "music_play") {
     set_state(State::Searching,{},job.request_id);
@@ -441,7 +441,7 @@ void Music::execute(const Job &job) {
           fail(job, "音乐没有从扬声器真正播放出来，请稍后再试。"); return;
         }
         set_state(State::Playing,{},job.request_id);
-        log_manager_.logger()->info("Music playback started continuously: {}; queued {} follow-up tracks",
+        log_manager_.logger()->info("MusicNode playback started continuously: {}; queued {} follow-up tracks",
           selected->value("name", std::string{}), queued);
         return;
       }
@@ -469,7 +469,7 @@ void Music::execute(const Job &job) {
   }
 }
 
-void Music::work() {
+void MusicNode::work() {
   while (!stop_) {
     Job job;
     { std::unique_lock<std::mutex> lock(jobs_mutex_);
@@ -481,7 +481,7 @@ void Music::work() {
     busy_ = true;
     try { execute(job); }
     catch (const std::exception &error) {
-      log_manager_.logger()->error("Music command failed: {}", error.what());
+      log_manager_.logger()->error("MusicNode command failed: {}", error.what());
       fail(job, "音乐服务暂时出了点问题，请再试一次。");
     }
     busy_ = false;

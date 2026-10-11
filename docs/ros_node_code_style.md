@@ -13,7 +13,7 @@
 │   └── <helper_class>.hpp       # 有独立业务组件时添加
 ├── src/
 │   ├── main.cpp                 # ROS 程序入口
-│   ├── <node_class>.cpp         # ROS 节点实现
+│   ├── <node_package>_node.cpp # ROS 节点实现
 │   └── <helper_class>.cpp       # 独立业务组件实现
 ├── config/
 │   └── biz_config.toml          # 节点业务及公共配置
@@ -24,14 +24,14 @@
 | 文件 | 职责 |
 | --- | --- |
 | `src/main.cpp` | 初始化 ROS，创建并运行节点，最后关闭 ROS；不放业务规则或通信对象创建逻辑。 |
-| `src/<node_class>.cpp` | 实现 `rclcpp::Node` 子类、ROS 通信初始化和回调协调。 |
+| `src/<node_package>_node.cpp` | 实现 `rclcpp::Node` 子类、ROS 通信初始化和回调协调。 |
 | `include/<node_package>/<node_package>_node.hpp` | 节点类声明、ROS 通信成员及必要的回调声明。 |
 | `src/<helper_class>.cpp`、`include/<node_package>/<helper_class>.hpp` | 实现可独立组织的业务逻辑，例如意图分类、参数解析或设备控制策略。 |
 | `config/biz_config.toml` | 保存本节点的公共配置和业务配置，随节点包安装。 |
 | `CMakeLists.txt` | 声明 C++ 标准、依赖、可执行文件源文件和安装规则。 |
 | `package.xml` | 声明 ROS 包依赖和包元信息。 |
 
-节点类头文件统一命名为 `<node_package>_node.hpp`，例如 `memory_node/memory_node.hpp`；节点实现源文件可按节点类名命名。
+节点类头文件统一命名为 `<node_package>_node.hpp`，节点实现源文件统一命名为 `<node_package>_node.cpp`，例如 `memory_node/include/memory_node/memory_node.hpp` 和 `memory_node/src/memory_node.cpp`。ROS 节点类统一使用由包名转换得到的 PascalCase 名称并加 `Node` 后缀，例如 `MusicNode`、`SpeechInputNode`；普通业务辅助类按职责命名，不添加 `Node` 后缀。
 
 一个节点包新增 `.cpp` 文件时，必须把它加入对应 `add_executable`。现有节点可以逐步迁移到此布局；迁移时保持话题、服务和消息行为兼容。
 
@@ -75,7 +75,7 @@
 ## 命名与格式
 
 - 目录、文件名、普通函数、普通方法和局部变量使用 `snake_case`。
-- 类名和结构体名使用 `PascalCase`，例如 `IntentNode`、`IntentRules`、`IntentResult`。
+- ROS 节点类名使用 `PascalCase` 并以 `Node` 结尾，例如 `MusicNode`、`SpeechInputNode`、`IntentNode`；业务辅助类和结构体使用体现职责的 `PascalCase`，例如 `IntentRules`、`IntentResult`。
 - ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`；其他方法使用 `snake_case`。
 - 类成员变量使用 `snake_case` 并以下划线结尾，例如 `intent_rules_`、`intent_publisher_`。
 - 常量使用 `k` 前缀和描述性名称，例如 `kMaxRetryCount`；私有实现细节和文件内常量放在 `.cpp` 的匿名命名空间中。

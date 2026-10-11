@@ -17,10 +17,10 @@
 #include <utility>
 #include <vector>
 
-class SpeechInput : public rclcpp::Node {
+class SpeechInputNode : public rclcpp::Node {
 public:
-  SpeechInput();
-  ~SpeechInput() override;
+  SpeechInputNode();
+  ~SpeechInputNode() override;
 private:
   void InitPublishers();
   void InitSubscribers();
@@ -45,7 +45,6 @@ private:
   void drain_results();
   void handle_text(const std::string &heard, bool was_armed);
   void acknowledge_wake();
-  void acknowledge_input();
   void reset_capture();
   void enter_standby();
   void accept_request(const std::string &text);
@@ -70,7 +69,7 @@ private:
   float input_gain_=6.f;
   double inactivity_timeout_sec_=120.0;
   double ignore_until_=0,armed_until_=0,last_wake_time_=0;
-  std::string wake_ack_path_,wake_ack_ding_path_;
+  std::string wake_ack_path_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr text_;
   rclcpp::Publisher<xiaocai_msgs::msg::AudioPlay>::SharedPtr play_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr awake_;

@@ -13,6 +13,5 @@ sense_model_path = "/home/lckfb/xiaocai_robot/resource/speech/sherpa-onnx-sense-
 sense_tokens_path = "/home/lckfb/xiaocai_robot/resource/speech/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt"
 vad_model_path = "/home/lckfb/xiaocai_robot/resource/speech/silero_vad.onnx"
 wake_ack_path = "/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"
-wake_ack_ding_path = "/home/lckfb/xiaocai_robot/resource/speech/wake_ack_ding.wav"
 input_gain = 6.0
 inactivity_timeout_sec = 120.0

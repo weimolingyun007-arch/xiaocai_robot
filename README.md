@@ -40,7 +40,7 @@ make build
 bash bringup/scripts/start_all_node.sh
 ```
 
-语音输入节点在待机时只监听唤醒词。每次唤醒后只接收一条用户请求，收到后播放叮声并立即回到待唤醒状态，这条请求的处理和语音回复继续正常进行；继续提问需要再次唤醒。“小蔡，播放晴天”这种唤醒词与请求连说的方式同样只接受一条请求。已排队或仍在识别中的旧音频不会成为下一条请求。唤醒后一直没有收到请求时，安静 120 秒也会返回待机；时长可通过 `speech_input_node` 的 `inactivity_timeout_sec` 启动参数设置。“闭嘴”继续用于立即停止回复和音乐。
+语音输入节点在待机时只监听唤醒词。每次唤醒后只接收一条用户请求，收到后立即回到待唤醒状态，不播放叮声；这条请求的处理和语音回复继续正常进行，继续提问需要再次唤醒。“小蔡，播放晴天”这种唤醒词与请求连说的方式同样只接受一条请求。已排队或仍在识别中的旧音频不会成为下一条请求。唤醒后一直没有收到请求时，安静 120 秒也会返回待机；时长可通过 `speech_input_node` 的 `inactivity_timeout_sec` 启动参数设置。“闭嘴”继续用于立即停止回复和音乐。
 
 ## DeepSeek 调用板端工具
 
@@ -131,7 +131,7 @@ sudo bash bringup/ota/install_autostart.sh
 
 板端需已安装 `/usr/local/bin/ncm-cli`（官方 `@music163/ncm-cli`）及 `mpv`，并在 `lckfb` 用户下配置开放平台凭证和扫码登录。CLI 运行时安装在 `/opt/ncm-cli`，账号配置位于 `/home/lckfb/.config/ncm-cli/`，更新机器人运行包时会保留。机器人依赖的 CLI、mpv 与 ROS 2 一样由板端预先安装。
 
-唤醒后可以说“播放晴天”“放一首歌”“暂停音乐”“继续播放”“停止播放音乐”“下一首”“上一首”。不指定歌名时搜索轻音乐。`intent_node` 发布 `music_play`、`music_pause`、`music_resume`、`music_stop`、`music_next` 或 `music_previous` 意图，歌名放在 `Intent.content`。`music_node` 处理这些意图，点歌时会把搜索结果里后续最多 5 首可播放歌曲加入网易云队列，并循环播放队列。唤醒词会结束当前连续播放。`dialogue_node` 跳过音乐意图。正常点歌用收到语音时的叮声确认；失败时本地语音提示，不请求 DeepSeek。
+唤醒后可以说“播放晴天”“放一首歌”“暂停音乐”“继续播放”“停止播放音乐”“下一首”“上一首”。不指定歌名时搜索轻音乐。`intent_node` 发布 `music_play`、`music_pause`、`music_resume`、`music_stop`、`music_next` 或 `music_previous` 意图，歌名放在 `Intent.content`。`music_node` 处理这些意图，点歌时会把搜索结果里后续最多 5 首可播放歌曲加入网易云队列，并循环播放队列。唤醒词会结束当前连续播放。`dialogue_node` 跳过音乐意图。点歌失败时本地语音提示，不请求 DeepSeek。
 
 音量范围是 0–150，启动默认为 150。RK809 DAC 在 100% 已达硬件满量程；100% 以上通过共享 ALSA `softvol` PCM 对语音和音乐一起增加数字增益，最高额外 +6 dB。唤醒提示音保留峰值余量，避免最大增益时削波；唤醒后可通过“音量调低一点”逐步调整，也可指定 150%。
 

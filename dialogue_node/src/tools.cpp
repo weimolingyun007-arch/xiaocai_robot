@@ -46,7 +46,7 @@ int int_arg(const json &args,const char *key,int low,int high) {
 }
 }
 
-json Dialogue::tool_definitions() {
+json DialogueNode::tool_definitions() {
   json tools=json::array();
   auto add=[&](const char *name,const char *description,json properties=json::object(),json required=json::array()) {
     tools.push_back({{"type","function"},{"function",{{"name",name},{"description",description},
@@ -70,18 +70,18 @@ json Dialogue::tool_definitions() {
   return tools;
 }
 
-bool Dialogue::cancelled(std::uint64_t generation) const {
+bool DialogueNode::cancelled(std::uint64_t generation) const {
   return stopping_||!rclcpp::ok()||generation_.load()!=generation;
 }
 
-void Dialogue::enqueue_chat(const std::string &text) {
+void DialogueNode::enqueue_chat(const std::string &text) {
   std::lock_guard<std::mutex> lock(tool_mutex_);
   // New accepted requests supersede any old cloud response. Standby alone does not.
   const auto generation=++generation_;
   jobs_.clear();jobs_.push_back({text,generation});tool_cv_.notify_all();
 }
 
-void Dialogue::chat_worker() {
+void DialogueNode::chat_worker() {
   while(!stopping_&&rclcpp::ok()) {
     ChatJob job;
     {
@@ -106,7 +106,7 @@ void Dialogue::chat_worker() {
   }
 }
 
-json Dialogue::memory_tool(MemoryOperation operation,const std::string &content,int delay,std::uint64_t generation) {
+json DialogueNode::memory_tool(MemoryOperation operation,const std::string &content,int delay,std::uint64_t generation) {
   if(cancelled(generation))return failure("cancelled");
   const auto id="tool-"+std::to_string(++tool_id_);
   std::unique_lock<std::mutex> lock(tool_mutex_);
@@ -123,7 +123,7 @@ json Dialogue::memory_tool(MemoryOperation operation,const std::string &content,
   return result;
 }
 
-json Dialogue::execute_tool(const std::string &name,const json &args,std::uint64_t generation,bool &music_started) {
+json DialogueNode::execute_tool(const std::string &name,const json &args,std::uint64_t generation,bool &music_started) {
   if(cancelled(generation))return failure("cancelled");
   try {
     if(name=="get_current_time") {
@@ -203,7 +203,7 @@ json Dialogue::execute_tool(const std::string &name,const json &args,std::uint64
   } catch(const std::exception &e){return failure(e.what());}
 }
 
-json Dialogue::completion(const json &messages,std::uint64_t generation) {
+json DialogueNode::completion(const json &messages,std::uint64_t generation) {
   const char *key=std::getenv("DEEPSEEK_API_KEY");
   if(!key||!*key)throw std::runtime_error("DEEPSEEK_API_KEY missing");
   const auto body=json{{"model",model_},{"messages",messages},{"tools",tool_definitions()},
@@ -227,7 +227,7 @@ json Dialogue::completion(const json &messages,std::uint64_t generation) {
   return parsed["choices"][0].at("message");
 }
 
-void Dialogue::chat(const std::string &text,const std::string &facts,std::uint64_t generation) {
+void DialogueNode::chat(const std::string &text,const std::string &facts,std::uint64_t generation) {
   json messages=json::array();
   std::string system="你是桌面陪伴机器人小蔡，安静、体贴，用自然简短中文回答，通常一两句。"
     "查询实时日期时间、实际音量、音乐状态必须调用提供的本地工具。操作音量、音乐、记忆、提醒也必须调用工具，只有ok=true才可说已完成。"

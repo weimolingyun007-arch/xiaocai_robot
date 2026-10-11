@@ -11,7 +11,7 @@ int main(int argc,char **argv) {
   int status=0;
   try {
     auto node=std::make_shared<rclcpp::Node>("tool_test_peer");
-    auto dialogue=std::make_shared<Dialogue>();
+    auto dialogue=std::make_shared<DialogueNode>();
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node);executor.add_node(dialogue);
     int volume=60,volume_commands=0,memory_writes=0,music_commands=0;

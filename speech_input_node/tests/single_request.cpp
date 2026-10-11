@@ -7,17 +7,17 @@
 // does not measure microphone recognition accuracy or synthesize speech.
 class SpeechInputTestPeer {
 public:
-  static void wake(SpeechInput &node) { node.acknowledge_wake(); }
-  static std::uint64_t generation(SpeechInput &node) { return node.recognition_generation_; }
-  static bool listening(SpeechInput &node) { return node.armed_until_ > 0; }
-  static void result(SpeechInput &node, const std::string &text, bool armed, std::uint64_t generation) {
+  static void wake(SpeechInputNode &node) { node.acknowledge_wake(); }
+  static std::uint64_t generation(SpeechInputNode &node) { return node.recognition_generation_; }
+  static bool listening(SpeechInputNode &node) { return node.armed_until_ > 0; }
+  static void result(SpeechInputNode &node, const std::string &text, bool armed, std::uint64_t generation) {
     std::lock_guard<std::mutex> lock(node.queue_mutex_);
     node.results_.push_back({text, armed, generation});
   }
-  static void drain(SpeechInput &node) { node.drain_results(); }
-  static void playback_ended(SpeechInput &node) { node.on_playing(false); }
-  static void reset_cooldown(SpeechInput &node) { node.last_wake_time_ = 0; }
-  static void timeout(SpeechInput &node) {
+  static void drain(SpeechInputNode &node) { node.drain_results(); }
+  static void playback_ended(SpeechInputNode &node) { node.on_playing(false); }
+  static void reset_cooldown(SpeechInputNode &node) { node.last_wake_time_ = 0; }
+  static void timeout(SpeechInputNode &node) {
     node.ignore_until_ = 0;
     node.armed_until_ = xc::monotonic() - 1;
     std_msgs::msg::UInt8MultiArray silence;
@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
   int status = 0;
   {
-    auto speech = std::make_shared<SpeechInput>();
+    auto speech = std::make_shared<SpeechInputNode>();
     auto observer = std::make_shared<rclcpp::Node>("single_request_test");
     std::vector<std::string> requests, sounds;
     bool awake = false;
@@ -67,9 +67,9 @@ int main(int argc, char **argv) {
       Peer::drain(*speech); pump(0.3);
       check(requests.size() == 1 && requests.back() == "现在音量是多少" && !awake && !Peer::listening(*speech),
         "one request closes session and discards queued second request");
-      check(sounds.back().find("wake_ack_ding.wav") != std::string::npos &&
+      check(std::find(sounds.begin(), sounds.end(), "wake_ack_ding.wav") == sounds.end() &&
         std::find(sounds.begin(), sounds.end(), "__stop__") == sounds.end(),
-        "normal standby queues ding without stopping the response");
+        "accepted speech does not queue a ding or stop the response");
 
       Peer::playback_ended(*speech);
       Peer::result(*speech, "继续说话", true, Peer::generation(*speech));

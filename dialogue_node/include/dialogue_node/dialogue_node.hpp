@@ -26,10 +26,10 @@
 #include <mutex>
 #include <thread>
 
-class Dialogue:public rclcpp::Node {
+class DialogueNode:public rclcpp::Node {
 public:
-  Dialogue();
-  ~Dialogue()override;
+  DialogueNode();
+  ~DialogueNode()override;
 private:
   void InitPublishers();
   void InitSubscribers();

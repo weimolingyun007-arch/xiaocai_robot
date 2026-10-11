@@ -88,7 +88,6 @@ speech_payload="$payload/resource/speech"
 vosk_model=vosk-model-small-cn-0.22
 sense_model=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
 install -D -m 0644 "$speech_assets/wake_ack.wav" "$speech_payload/wake_ack.wav"
-install -D -m 0644 "$speech_assets/wake_ack_ding.wav" "$speech_payload/wake_ack_ding.wav"
 install -D -m 0644 "$speech_assets/silero_vad.onnx" "$speech_payload/silero_vad.onnx"
 for asset in \
   am/final.mdl \

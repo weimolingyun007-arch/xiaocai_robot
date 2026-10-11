@@ -13,7 +13,7 @@ include_directories(include "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty" "${CMAKE
 add_executable(music_node
   src/main.cpp
   src/music_config.cpp
-  src/music.cpp
+  src/music_node.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
 ament_target_dependencies(music_node ament_index_cpp rclcpp std_msgs xiaocai_msgs)

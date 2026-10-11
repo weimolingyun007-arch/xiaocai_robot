@@ -8,7 +8,7 @@
 #include <vector>
 
 
-Tts::Tts()
+TtsNode::TtsNode()
     : Node("tts_node"), tts_config_(),
       log_manager_("tts_node", tts_config_.logging()) {
     const auto &settings = tts_config_.settings();
@@ -27,19 +27,23 @@ Tts::Tts()
     log_manager_.logger()->info("sherpa Chinese TTS loaded");
   }
 
-void Tts::InitPublishers() {
+void TtsNode::InitPublishers() {
     play_=create_publisher<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play",10);
   }
 
-void Tts::InitSubscribers() {
+void TtsNode::InitSubscribers() {
     sub_=create_subscription<std_msgs::msg::String>("/xiaocai_robot/tts/text",10,[this](std_msgs::msg::String::SharedPtr m){synthesize(m->data);});
   }
 
-Tts::~Tts() {if(tts_)SherpaOnnxDestroyOfflineTts(tts_);}
+TtsNode::~TtsNode() {if(tts_)SherpaOnnxDestroyOfflineTts(tts_);}
 
-void Tts::synthesize(std::string text) {
+void TtsNode::synthesize(std::string text) {
     text=xc::utf8_prefix(xc::trim(text),400);if(text.empty())return;
-    auto audio=SherpaOnnxOfflineTtsGenerate(tts_,text.c_str(),speaker_,0.95f);
+    SherpaOnnxGenerationConfig generation_config{};
+    generation_config.sid=speaker_;
+    generation_config.speed=0.95f;
+    auto audio=SherpaOnnxOfflineTtsGenerateWithConfig(
+      tts_,text.c_str(),&generation_config,nullptr,nullptr);
     if(!audio||audio->n<=0){log_manager_.logger()->error("TTS generation failed");return;}
     auto path="/tmp/xiaocai_tts/"+std::to_string(++id_)+".wav";
     std::vector<float> samples(audio->samples,audio->samples+audio->n);

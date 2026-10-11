@@ -118,7 +118,6 @@ done
 for required in \
   resource/speech/wake_ack.wav \
   resource/audio/asound.conf \
-  resource/speech/wake_ack_ding.wav \
   resource/speech/silero_vad.onnx \
   resource/speech/vosk-model-small-cn-0.22/am/final.mdl \
   resource/speech/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \

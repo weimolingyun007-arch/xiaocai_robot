@@ -14,7 +14,7 @@ include_directories(include "${VENDOR_DIR}" "${VENDOR_DIR}/spdlog-1.17.0/include
 add_executable(audio_io_node
   src/main.cpp
   src/audio_io_config.cpp
-  src/audio_io.cpp
+  src/audio_io_node.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
 ament_target_dependencies(audio_io_node ament_index_cpp rclcpp std_msgs xiaocai_msgs)

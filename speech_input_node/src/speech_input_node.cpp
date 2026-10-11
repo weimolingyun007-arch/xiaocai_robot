@@ -84,7 +84,7 @@ size_t wake_alias_prefix_size(const std::string &text) {
 }
 }
 
-SpeechInput::SpeechInput()
+SpeechInputNode::SpeechInputNode()
     : Node("speech_input_node"), speech_input_config_(),
       log_manager_("speech_input_node", speech_input_config_.logging()) {
   const auto &settings = speech_input_config_.settings();
@@ -97,8 +97,6 @@ SpeechInput::SpeechInput()
   const auto vad_path = declare_parameter<std::string>(
     "vad_model_path", settings.vad_model_path);
   wake_ack_path_ = declare_parameter<std::string>("wake_ack_path", settings.wake_ack_path);
-  wake_ack_ding_path_ = declare_parameter<std::string>(
-    "wake_ack_ding_path", settings.wake_ack_ding_path);
   const double gain = declare_parameter<double>("input_gain", settings.input_gain);
   if (gain <= 0 || gain > 30) throw std::runtime_error("input_gain must be in (0, 30]");
   input_gain_ = static_cast<float>(gain);
@@ -146,13 +144,13 @@ SpeechInput::SpeechInput()
   log_manager_.logger()->info("Wake-only standby ready; SenseVoice runs after wake detection");
 }
 
-void SpeechInput::InitPublishers() {
+void SpeechInputNode::InitPublishers() {
   text_ = create_publisher<std_msgs::msg::String>("/xiaocai_robot/speech/text", 10);
   awake_ = create_publisher<std_msgs::msg::Bool>("/xiaocai_robot/speech/awake", 10);
   play_ = create_publisher<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10);
 }
 
-void SpeechInput::InitSubscribers() {
+void SpeechInputNode::InitSubscribers() {
   mic_sub_ = create_subscription<std_msgs::msg::UInt8MultiArray>("/xiaocai_robot/audio/mic", 10,
     [this](std_msgs::msg::UInt8MultiArray::SharedPtr m) { on_audio(*m); });
   playing_sub_ = create_subscription<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10,
@@ -171,11 +169,11 @@ void SpeechInput::InitSubscribers() {
     });
 }
 
-void SpeechInput::InitTimers() {
+void SpeechInputNode::InitTimers() {
   result_timer_ = create_wall_timer(std::chrono::milliseconds(50), [this] { drain_results(); });
 }
 
-SpeechInput::~SpeechInput() {
+SpeechInputNode::~SpeechInputNode() {
   { std::lock_guard<std::mutex> lock(queue_mutex_); stop_ = true; }
   queue_ready_.notify_all();
   if (decoder_.joinable()) decoder_.join();
@@ -185,13 +183,13 @@ SpeechInput::~SpeechInput() {
   if (wake_model_) vosk_model_free(wake_model_);
 }
 
-void SpeechInput::on_playing(bool playing) {
+void SpeechInputNode::on_playing(bool playing) {
   playing_ = playing;
   reset_capture();
   if (!playing) ignore_until_ = xc::monotonic() + 0.4;
 }
 
-void SpeechInput::reset_capture() {
+void SpeechInputNode::reset_capture() {
   wake_candidate_ = false;
   vosk_recognizer_reset(wake_recognizer_);
   SherpaOnnxVoiceActivityDetectorReset(vad_);
@@ -200,7 +198,7 @@ void SpeechInput::reset_capture() {
   samples_seen_=history_begin_=0;
 }
 
-void SpeechInput::collect_segments() {
+void SpeechInputNode::collect_segments() {
   while (!SherpaOnnxVoiceActivityDetectorEmpty(vad_)) {
     const auto *segment = SherpaOnnxVoiceActivityDetectorFront(vad_);
     const bool armed = xc::monotonic() < armed_until_;
@@ -232,7 +230,7 @@ void SpeechInput::collect_segments() {
   }
 }
 
-void SpeechInput::on_audio(const std_msgs::msg::UInt8MultiArray &m) {
+void SpeechInputNode::on_audio(const std_msgs::msg::UInt8MultiArray &m) {
   if (xc::monotonic() < ignore_until_ || m.data.size() < 2) return;
   if (playing_ || music_playing_) {
     if (vosk_recognizer_accept_waveform(wake_recognizer_,
@@ -320,7 +318,7 @@ void SpeechInput::on_audio(const std_msgs::msg::UInt8MultiArray &m) {
   collect_segments();
 }
 
-void SpeechInput::decode_loop() {
+void SpeechInputNode::decode_loop() {
   while (true) {
     Segment segment;
     {
@@ -353,7 +351,7 @@ void SpeechInput::decode_loop() {
   }
 }
 
-void SpeechInput::drain_results() {
+void SpeechInputNode::drain_results() {
   std::deque<Recognition> results;
   { std::lock_guard<std::mutex> lock(queue_mutex_); results.swap(results_); }
   for (const auto &result : results) {
@@ -363,7 +361,7 @@ void SpeechInput::drain_results() {
   }
 }
 
-void SpeechInput::handle_text(const std::string &heard, bool was_armed) {
+void SpeechInputNode::handle_text(const std::string &heard, bool was_armed) {
   if (music_playing_ || (was_armed && armed_until_ == 0)) return;
   if (is_hush_command(heard) &&
       (was_armed || find_wakeword(heard) != std::string::npos)) {
@@ -405,7 +403,7 @@ void SpeechInput::handle_text(const std::string &heard, bool was_armed) {
   }
 }
 
-void SpeechInput::acknowledge_wake() {
+void SpeechInputNode::acknowledge_wake() {
   // A wake word explicitly ends the current music session.
   xiaocai_robot::common::mpv_command({"stop"});
   music_playing_ = false;
@@ -428,14 +426,7 @@ void SpeechInput::acknowledge_wake() {
   log_manager_.logger()->info("wakeword acknowledged");
 }
 
-void SpeechInput::acknowledge_input() {
-  xiaocai_msgs::msg::AudioPlay play;
-  play.path = wake_ack_ding_path_;
-  play_->publish(play);
-  log_manager_.logger()->info("accepted speech; acknowledgement beep queued");
-}
-
-void SpeechInput::enter_standby() {
+void SpeechInputNode::enter_standby() {
   armed_until_ = 0;
   ++recognition_generation_;
   request_in_flight_ = false;
@@ -450,16 +441,15 @@ void SpeechInput::enter_standby() {
   awake_->publish(awake);
 }
 
-void SpeechInput::accept_request(const std::string &text) {
+void SpeechInputNode::accept_request(const std::string &text) {
   // Close this wake session before publishing the request. Pending or in-flight
   // ASR results carry the old generation and cannot become a second request.
   enter_standby();
-  acknowledge_input();
   text_->publish(xc::str(text));
   log_manager_.logger()->info("Single request accepted; waiting for the next wake word");
 }
 
-void SpeechInput::return_to_wake_only() {
+void SpeechInputNode::return_to_wake_only() {
   xiaocai_robot::common::mpv_command({"stop"});
   last_wake_time_ = xc::monotonic();
   enter_standby();

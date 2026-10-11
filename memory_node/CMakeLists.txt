@@ -13,7 +13,7 @@ include_directories(include "${VENDOR_DIR}" "${VENDOR_DIR}/spdlog-1.17.0/include
 add_executable(memory_node
   src/main.cpp
   src/memory_config.cpp
-  src/memory.cpp
+  src/memory_node.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
 ament_target_dependencies(memory_node ament_index_cpp rclcpp xiaocai_msgs)

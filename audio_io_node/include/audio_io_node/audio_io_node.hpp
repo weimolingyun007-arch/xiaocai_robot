@@ -17,10 +17,10 @@
 #include <atomic>
 #include <signal.h>
 
-class AudioIo : public rclcpp::Node {
+class AudioIoNode : public rclcpp::Node {
 public:
-  AudioIo();
-  ~AudioIo() override;
+  AudioIoNode();
+  ~AudioIoNode() override;
 private:
   void InitPublishers();
   void InitSubscribers();

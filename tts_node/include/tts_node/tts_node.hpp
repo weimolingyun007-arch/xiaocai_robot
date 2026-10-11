@@ -7,10 +7,10 @@
 #include <rclcpp/rclcpp.hpp>
 #include <filesystem>
 
-class Tts:public rclcpp::Node {
+class TtsNode:public rclcpp::Node {
 public:
-  Tts();
-  ~Tts()override;
+  TtsNode();
+  ~TtsNode()override;
 private:
   void InitPublishers();
   void InitSubscribers();

@@ -14,7 +14,7 @@
 #include <thread>
 
 
-AudioIo::AudioIo()
+AudioIoNode::AudioIoNode()
     : Node("audio_io_node"), audio_io_config_(),
       log_manager_("audio_io_node", audio_io_config_.logging()) {
     const auto &settings = audio_io_config_.settings();
@@ -40,13 +40,13 @@ AudioIo::AudioIo()
     playback_ = std::thread([this] { playback_loop(); });
   }
 
-void AudioIo::InitPublishers() {
+void AudioIoNode::InitPublishers() {
     mic_ = create_publisher<std_msgs::msg::UInt8MultiArray>("/xiaocai_robot/audio/mic", 10);
     playing_ = create_publisher<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10);
     volume_state_ = create_publisher<std_msgs::msg::Int32>("/xiaocai_robot/audio/volume/state", 10);
   }
 
-void AudioIo::InitSubscribers() {
+void AudioIoNode::InitSubscribers() {
     play_sub_ = create_subscription<xiaocai_msgs::msg::AudioPlay>("/xiaocai_robot/audio/play", 10,
       [this](xiaocai_msgs::msg::AudioPlay::SharedPtr m) {
         if (m->path == "__stop__") {
@@ -78,7 +78,7 @@ void AudioIo::InitSubscribers() {
       });
   }
 
-void AudioIo::InitServers() {
+void AudioIoNode::InitServers() {
     volume_get_service_ = create_service<xiaocai_msgs::srv::GetVolume>("/xiaocai_robot/audio/get_volume",
       [this](const std::shared_ptr<xiaocai_msgs::srv::GetVolume::Request>,
              std::shared_ptr<xiaocai_msgs::srv::GetVolume::Response> response) {
@@ -86,7 +86,7 @@ void AudioIo::InitServers() {
       });
   }
 
-void AudioIo::set_volume(int percent,bool notify) {
+void AudioIoNode::set_volume(int percent,bool notify) {
     percent=std::clamp(percent,0,150);
     // The RK809 driver rejects writes above 252 even though its mixer advertises 255.
     int dac=percent==0?0:std::min(252,200+(percent*52+50)/100);
@@ -104,7 +104,7 @@ void AudioIo::set_volume(int percent,bool notify) {
     if(notify){std_msgs::msg::Int32 state;state.data=percent;volume_state_->publish(state);}
 }
 
-AudioIo::~AudioIo() {
+AudioIoNode::~AudioIoNode() {
     stop_ = true; cv_.notify_all();
     if (capture_pid_ > 0) kill(capture_pid_, SIGTERM);
     if (playback_pid_ > 0) kill(playback_pid_, SIGTERM);
@@ -112,7 +112,7 @@ AudioIo::~AudioIo() {
     if (playback_.joinable()) playback_.join();
   }
 
-void AudioIo::make_beep() {
+void AudioIoNode::make_beep() {
     beep_ = "/tmp/xiaocai_beep.wav";
     std::ofstream out(beep_, std::ios::binary);
     const int n = 1440; const int size = n * 2;
@@ -123,7 +123,7 @@ void AudioIo::make_beep() {
     for(int i=0;i<n;++i){ short sample=static_cast<short>(2500*std::sin(2*M_PI*750*i/16000)); out.write((char*)&sample,2); }
   }
 
-void AudioIo::make_silence() {
+void AudioIoNode::make_silence() {
     silence_="/tmp/xiaocai_silence.wav";
     std::ofstream out(silence_,std::ios::binary);
     unsigned samples=160,bytes=samples*2;
@@ -136,7 +136,7 @@ void AudioIo::make_silence() {
     const std::array<char,320> zeros{};out.write(zeros.data(),zeros.size());
   }
 
-void AudioIo::capture_loop() {
+void AudioIoNode::capture_loop() {
     while (!stop_) {
       int fds[2];
       if(pipe(fds)!=0){std::this_thread::sleep_for(std::chrono::seconds(1));continue;}
@@ -169,7 +169,7 @@ void AudioIo::capture_loop() {
     }
   }
 
-void AudioIo::playback_loop() {
+void AudioIoNode::playback_loop() {
     while (!stop_) {
       std::string path;
       {std::unique_lock<std::mutex> lock(mu_); cv_.wait(lock,[this]{return stop_||!queue_.empty();});
@@ -178,7 +178,7 @@ void AudioIo::playback_loop() {
       if(path=="__beep__") path=beep_;
       if(access(path.c_str(),R_OK)!=0) {log_manager_.logger()->error("Missing audio file: {}",path); continue;}
       std_msgs::msg::Bool state; state.data=true; playing_->publish(state);
-      // Pause music synchronously before the wake response, ding or spoken reply.
+      // Pause music synchronously before the wake response or spoken reply.
       xiaocai_robot::common::mpv_command({"set_property", "pause", true});
       std::this_thread::sleep_for(std::chrono::milliseconds(80));
       int status=0;

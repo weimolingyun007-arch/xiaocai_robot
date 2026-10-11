@@ -17,7 +17,7 @@ include_directories(include "${VENDOR_DIR}" "${VENDOR_DIR}/spdlog-1.17.0/include
 add_executable(speech_input_node
   src/main.cpp
   src/speech_input_config.cpp
-  src/speech_input.cpp
+  src/speech_input_node.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
 ament_target_dependencies(speech_input_node ament_index_cpp rclcpp std_msgs xiaocai_msgs)

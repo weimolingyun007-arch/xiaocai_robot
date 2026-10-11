@@ -14,10 +14,10 @@
 #include <mutex>
 #include <thread>
 
-class Music : public rclcpp::Node {
+class MusicNode : public rclcpp::Node {
 public:
-  Music();
-  ~Music() override;
+  MusicNode();
+  ~MusicNode() override;
 private:
   void InitPublishers();
   void InitSubscribers();

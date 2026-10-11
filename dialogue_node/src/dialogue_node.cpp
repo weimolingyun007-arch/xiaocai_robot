@@ -9,7 +9,7 @@
 
 
 
-Dialogue::Dialogue()
+DialogueNode::DialogueNode()
     : Node("dialogue_node"), dialogue_config_(),
       log_manager_("dialogue_node", dialogue_config_.logging()) {
     const auto &settings = dialogue_config_.settings();
@@ -24,7 +24,7 @@ Dialogue::Dialogue()
     worker_=std::thread([this]{chat_worker();});
   }
 
-void Dialogue::InitPublishers() {
+void DialogueNode::InitPublishers() {
     tts_=create_publisher<std_msgs::msg::String>("/xiaocai_robot/tts/text",10);
     state_=create_publisher<xiaocai_msgs::msg::RobotState>("/xiaocai_robot/state",10);
     memory_=create_publisher<xiaocai_msgs::msg::MemoryCommand>("/xiaocai_robot/memory/command",10);
@@ -32,7 +32,7 @@ void Dialogue::InitPublishers() {
     music_command_=create_publisher<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent",10);
   }
 
-void Dialogue::InitSubscribers() {
+void DialogueNode::InitSubscribers() {
     intent_sub_=create_subscription<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent",10,[this](xiaocai_msgs::msg::Intent::SharedPtr m){on_intent(*m);});
     result_sub_=create_subscription<xiaocai_msgs::msg::MemoryResult>("/xiaocai_robot/memory/result",10,[this](xiaocai_msgs::msg::MemoryResult::SharedPtr m){on_result(*m);});
     due_sub_=create_subscription<xiaocai_msgs::msg::Reminder>("/xiaocai_robot/reminder/due",10,[this](xiaocai_msgs::msg::Reminder::SharedPtr m){on_due(*m);});
@@ -49,25 +49,25 @@ void Dialogue::InitSubscribers() {
       [this](xiaocai_msgs::msg::AudioPlay::SharedPtr m){if(m->path=="__stop__"){hushed_=true;++generation_;tool_cv_.notify_all();}});
   }
 
-void Dialogue::InitClients() {
+void DialogueNode::InitClients() {
     volume_get_client_=create_client<xiaocai_msgs::srv::GetVolume>("/xiaocai_robot/audio/get_volume");
   }
 
-void Dialogue::InitTimers() {
+void DialogueNode::InitTimers() {
     timer_=create_wall_timer(std::chrono::seconds(3),[this]{if(!loaded_)request(xiaocai_robot::common::MemoryOperation::GetQuiet);});
   }
 
-Dialogue::~Dialogue() {stopping_=true;tool_cv_.notify_all();if(worker_.joinable())worker_.join();curl_global_cleanup();}
+DialogueNode::~DialogueNode() {stopping_=true;tool_cv_.notify_all();if(worker_.joinable())worker_.join();curl_global_cleanup();}
 
-void Dialogue::publish_state(xiaocai_robot::common::RobotState state) {
+void DialogueNode::publish_state(xiaocai_robot::common::RobotState state) {
     xiaocai_msgs::msg::RobotState message;
     message.state=static_cast<std::uint8_t>(state);
     state_->publish(message);
   }
 
-void Dialogue::speak(const std::string &text) {if(hushed_||stopping_)return;publish_state(xiaocai_robot::common::RobotState::Thinking);tts_->publish(xc::str(text));}
+void DialogueNode::speak(const std::string &text) {if(hushed_||stopping_)return;publish_state(xiaocai_robot::common::RobotState::Thinking);tts_->publish(xc::str(text));}
 
-void Dialogue::request(xiaocai_robot::common::MemoryOperation operation,
+void DialogueNode::request(xiaocai_robot::common::MemoryOperation operation,
     const std::string &content,int32_t delay_seconds,bool enabled) {
     std::string id=std::to_string(++next_id_);
     pending_[id]=operation;
@@ -80,7 +80,7 @@ void Dialogue::request(xiaocai_robot::common::MemoryOperation operation,
     memory_->publish(message);
   }
 
-void Dialogue::on_intent(const xiaocai_msgs::msg::Intent &message) {
+void DialogueNode::on_intent(const xiaocai_msgs::msg::Intent &message) {
     const auto &intent=message.intent;const auto &text=message.text;
     if(intent.rfind("music_",0)==0)return;
     if(hushed_)return;
@@ -115,7 +115,7 @@ void Dialogue::on_intent(const xiaocai_msgs::msg::Intent &message) {
     else enqueue_chat(text);
   }
 
-void Dialogue::on_result(const xiaocai_msgs::msg::MemoryResult &message) {
+void DialogueNode::on_result(const xiaocai_msgs::msg::MemoryResult &message) {
     if(message.request_id.rfind("tool-",0)==0) {
       std::lock_guard<std::mutex> lock(tool_mutex_);
       auto entry=tool_results_.find(message.request_id);
@@ -144,7 +144,7 @@ void Dialogue::on_result(const xiaocai_msgs::msg::MemoryResult &message) {
       speak("好的，我会提醒你"+message.content+"。");
   }
 
-void Dialogue::on_due(const xiaocai_msgs::msg::Reminder &message) {
+void DialogueNode::on_due(const xiaocai_msgs::msg::Reminder &message) {
     if(message.content.empty())return;
     if(quiet_)held_.push_back(message.content);
     else speak("提醒你，"+message.content);

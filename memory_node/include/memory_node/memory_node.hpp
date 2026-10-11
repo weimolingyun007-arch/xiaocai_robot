@@ -9,10 +9,10 @@
 #include <filesystem>
 #include <string>
 
-class Memory:public rclcpp::Node {
+class MemoryNode:public rclcpp::Node {
 public:
-  Memory();
-  ~Memory()override;
+  MemoryNode();
+  ~MemoryNode()override;
 private:
   void InitPublishers();
   void InitSubscribers();

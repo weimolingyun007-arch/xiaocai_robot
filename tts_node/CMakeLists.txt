@@ -16,7 +16,7 @@ include_directories(include "${VENDOR_DIR}" "${VENDOR_DIR}/spdlog-1.17.0/include
 add_executable(tts_node
   src/main.cpp
   src/tts_config.cpp
-  src/tts.cpp
+  src/tts_node.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
 ament_target_dependencies(tts_node ament_index_cpp rclcpp std_msgs xiaocai_msgs)
