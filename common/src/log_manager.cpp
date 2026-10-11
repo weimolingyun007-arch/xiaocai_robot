@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-namespace xc {
+namespace xiaocai_robot {
 namespace {
 
 std::string LocalDateKey(std::time_t timestamp) {
@@ -54,23 +54,27 @@ std::filesystem::path ExpandDirectory(std::filesystem::path path) {
   const std::string value = path.string();
   if (!value.empty() && value.front() == '~') {
     if (const char *home = std::getenv("HOME")) {
-      path = std::filesystem::path(home) / value.substr(value.size() > 1 ? 2 : 1);
+      path =
+          std::filesystem::path(home) / value.substr(value.size() > 1 ? 2 : 1);
     }
   } else if (path.is_relative()) {
     const char *home = std::getenv("HOME");
-    path = (home ? std::filesystem::path(home) : std::filesystem::current_path()) / path;
+    path =
+        (home ? std::filesystem::path(home) : std::filesystem::current_path()) /
+        path;
   }
   return path.lexically_normal();
 }
 
 bool IsDigitString(const std::string &value) {
-  return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char character) {
-    return std::isdigit(character);
-  });
+  return !value.empty() &&
+         std::all_of(value.begin(), value.end(), [](unsigned char character) {
+           return std::isdigit(character);
+         });
 }
 
 bool ParseLogFilename(const std::string &name, const std::string &prefix,
-                        std::string &stamp, std::size_t &rotation_index) {
+                      std::string &stamp, std::size_t &rotation_index) {
   constexpr std::size_t kStampSize = 15U;
   if (name.compare(0, prefix.size(), prefix) != 0 ||
       name.size() < prefix.size() + kStampSize + 4U) {
@@ -99,7 +103,8 @@ bool ParseLogFilename(const std::string &name, const std::string &prefix,
   rotation_index = 0U;
   for (const char digit : index_text) {
     const auto value = static_cast<std::size_t>(digit - '0');
-    if (rotation_index > (std::numeric_limits<std::size_t>::max() - value) / 10U) {
+    if (rotation_index >
+        (std::numeric_limits<std::size_t>::max() - value) / 10U) {
       return false;
     }
     rotation_index = rotation_index * 10U + value;
@@ -107,16 +112,18 @@ bool ParseLogFilename(const std::string &name, const std::string &prefix,
   return rotation_index > 0U;
 }
 
-
-class DailySizeRotatingSink final : public spdlog::sinks::base_sink<std::mutex> {
+class DailySizeRotatingSink final
+    : public spdlog::sinks::base_sink<std::mutex> {
 public:
   DailySizeRotatingSink(std::string logger_name, LogManagerConfig config)
       : directory_(std::move(config.directory)),
         filename_prefix_(std::move(logger_name) + "_"),
         max_file_size_bytes_(config.max_file_size_bytes),
-        max_files_per_day_(config.max_files_per_day), retention_days_(config.retention_days) {
+        max_files_per_day_(config.max_files_per_day),
+        retention_days_(config.retention_days) {
     std::filesystem::create_directories(directory_);
-    BeginDay(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+    BeginDay(
+        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
   }
 
 protected:
@@ -156,8 +163,10 @@ private:
 
   void CleanupExpired(const std::string &today) {
     const auto now = std::chrono::system_clock::now();
-    const auto cutoff_time = now - std::chrono::hours(24 * (retention_days_ - 1));
-    const auto cutoff = LocalDateKey(std::chrono::system_clock::to_time_t(cutoff_time));
+    const auto cutoff_time =
+        now - std::chrono::hours(24 * (retention_days_ - 1));
+    const auto cutoff =
+        LocalDateKey(std::chrono::system_clock::to_time_t(cutoff_time));
     for (const auto &entry : std::filesystem::directory_iterator(directory_)) {
       if (!entry.is_regular_file()) {
         continue;
@@ -175,8 +184,8 @@ private:
       std::error_code error;
       std::filesystem::remove(entry.path(), error);
       if (error) {
-        std::cerr << "[log_manager] Unable to remove expired log " << entry.path()
-                  << ": " << error.message() << '\n';
+        std::cerr << "[log_manager] Unable to remove expired log "
+                  << entry.path() << ": " << error.message() << '\n';
       }
     }
 
@@ -208,8 +217,8 @@ private:
       std::error_code error;
       std::filesystem::remove_all(entry.path(), error);
       if (error) {
-        std::cerr << "[log_manager] Unable to remove expired log directory " << entry.path()
-                  << ": " << error.message() << '\n';
+        std::cerr << "[log_manager] Unable to remove expired log directory "
+                  << entry.path() << ": " << error.message() << '\n';
       }
     }
   }
@@ -222,8 +231,8 @@ private:
       }
       std::string stamp;
       std::size_t rotation_index = 0U;
-      if (!ParseLogFilename(entry.path().filename().string(), filename_prefix_, stamp,
-                              rotation_index) ||
+      if (!ParseLogFilename(entry.path().filename().string(), filename_prefix_,
+                            stamp, rotation_index) ||
           stamp.substr(0, 8) != day) {
         continue;
       }
@@ -289,13 +298,17 @@ private:
 };
 
 std::string SafeFilename(std::string name) {
-  std::replace_if(name.begin(), name.end(), [](unsigned char character) {
-    return !(std::isalnum(character) || character == '_' || character == '-' || character == '.');
-  }, '_');
+  std::replace_if(
+      name.begin(), name.end(),
+      [](unsigned char character) {
+        return !(std::isalnum(character) || character == '_' ||
+                 character == '-' || character == '.');
+      },
+      '_');
   return name.empty() ? "node" : name;
 }
 
-}  // namespace
+} // namespace
 
 LogManager::LogManager(std::string logger_name, LogManagerConfig config) {
   const std::string file_prefix = SafeFilename(logger_name);
@@ -306,19 +319,21 @@ LogManager::LogManager(std::string logger_name, LogManagerConfig config) {
   }
   std::vector<spdlog::sink_ptr> sinks;
   try {
-    sinks.push_back(std::make_shared<DailySizeRotatingSink>(file_prefix, config));
+    sinks.push_back(
+        std::make_shared<DailySizeRotatingSink>(file_prefix, config));
   } catch (const std::exception &error) {
-    std::cerr << "[log_manager] Unable to initialize file logging: " << error.what()
-              << "; continuing with console logging\n";
+    std::cerr << "[log_manager] Unable to initialize file logging: "
+              << error.what() << "; continuing with console logging\n";
   }
   if (config.console || sinks.empty()) {
     sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
   }
 
-  logger_ = std::make_shared<spdlog::logger>(logger_name, sinks.begin(), sinks.end());
+  logger_ =
+      std::make_shared<spdlog::logger>(logger_name, sinks.begin(), sinks.end());
   logger_->set_level(spdlog::level::from_str(config.level));
   logger_->set_pattern(config.pattern);
   logger_->flush_on(spdlog::level::warn);
 }
 
-}  // namespace xc
+} // namespace xiaocai_robot

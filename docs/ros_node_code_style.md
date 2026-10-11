@@ -68,20 +68,29 @@
 | `InitServers()` | Service Server |
 
 - 每个 `Init...()` 方法只创建对应类型的对象，并赋值给节点类成员。
+- `InitPublishers()` 和 `InitSubscribers()` 必须使用局部计数器统计成功创建的对象，并在函数末尾通过 `LOG_INFO` 打印数量，格式统一为 `LOG_INFO("Initialized {} publishers", initialized_count)` 和 `LOG_INFO("Initialized {} subscribers", initialized_count)`。每创建一个对象后递增计数器，确保日志反映实际创建数量。
 - 构造函数按需调用初始化方法，顺序统一为 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`；没有该类对象时跳过对应调用。
 - 不声明空的 `Init...()` 方法；节点首次需要某种通信对象时，再增加方法并从构造函数调用。
-- 定时器等其他 ROS 资源如需统一初始化，应使用单独、职责明确的 `Init...()` 方法，不与上述四类通信对象混在一起。
+- 定时器和业务组件等其他资源如需统一初始化，应使用单独、职责明确的 `Init...()` 方法，例如 `InitTimers()`、`InitController()`；不与上述四类通信对象混在一起。
+
+## 命名空间
+
+- 节点类、配置类和业务组件直接放在 `xiaocai_robot` 命名空间内，不使用 `xc` 子命名空间；节点类在全局作用域的引用写作 `xiaocai_robot::MusicNode`。
+- 跨节点共享的意图、状态和操作枚举及 MPV 辅助函数保留在 `xiaocai_robot::common`，枚举定义放在 `common/include/defination/` 下的独立头文件中。ROS 消息只通过 `uint8` 等基础字段承载枚举值，不在 `.msg` 里重复定义枚举常量；生产者和消费者在 ROS 消息边界处显式转换为公共枚举。`main()` 按 C++ 入口要求留在全局命名空间；第三方库和 ROS 生成代码保持其原有命名空间。
 
 ## 命名与格式
 
 - 目录、文件名、变量使用 `snake_case`。
-- 项目自有函数和类成员方法统一使用 `PascalCase`（大驼峰），例如 `OnText()`、`InitPublishers()`、`Classify()`；函数声明、定义和所有调用点保持一致。`main` 等语言入口、外部接口要求固定名称的回调/重写方法，以及第三方库 API 保持其规定名称。
+- 项目自有函数和类成员方法统一使用 `PascalCase`（大驼峰），例如 `OnTextCallback()`、`InitPublishers()`、`Classify()`；函数声明、定义和所有调用点保持一致。`main` 等语言入口、外部接口要求固定名称的回调/重写方法，以及第三方库 API 保持其规定名称。
 - ROS 节点类名使用 `PascalCase` 并以 `Node` 结尾，例如 `MusicNode`、`SpeechInputNode`、`IntentNode`；业务辅助类和结构体使用体现职责的 `PascalCase`，例如 `IntentRules`、`IntentResult`。
 - ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`。
 - 订阅者回调统一由节点成员方法处理，方法名采用 `On<消息或主题>Callback` 格式，例如 `OnTextCallback()`、`OnIntentCallback()`、`OnAudioPlayingCallback()`。`InitSubscribers()` 中的订阅 lambda 只转交消息，不承载业务处理逻辑。
+- ROS 通信对象成员变量以用途或主题命名，并使用完整对象类型后缀：发布者为 `_publisher_`、订阅者为 `_subscriber_`、客户端为 `_client_`、服务端为 `_server_`。例如 `state_publisher_`、`intent_subscriber_`、`volume_get_client_`、`volume_get_server_`；避免使用 `state_`、`intent_sub_` 等无法直接判断对象类型的名称。
+- 类头文件中的私有成员函数按职责分组；每组第一条声明上方添加单行注释说明该组职责，不同组之间空一行。ROS 通信方法可按初始化、消息发布、订阅回调等职责分组。
+- `.cpp` 中成员函数定义的分组顺序及组内顺序必须与头文件中的声明一致。
 - 类成员变量使用 `snake_case` 并以下划线结尾，例如 `intent_rules_`、`intent_publisher_`。
 - 常量使用 `k` 前缀和描述性名称，例如 `kMaxRetryCount`；私有实现细节和文件内常量放在 `.cpp` 的匿名命名空间中。
-- 使用两个空格缩进，左花括号与函数或控制语句同行。简单提前返回可以单行书写；多步操作或多分支逻辑使用多行和花括号。
+- 使用仓库根目录 `.clang-format` 规定的格式：基于 LLVM 风格、两个空格缩进；左花括号与函数或控制语句同行。简单提前返回可以单行书写；多步操作或多分支逻辑使用多行和花括号。
 - 头文件使用 `#pragma once`，只包含声明本身需要的依赖；函数实现放在 `.cpp` 文件中。
 - 每个头文件应可独立包含，不依赖其他头文件的偶然传递包含。
 - 不使用全局 `using namespace`；标准库类型使用 `std::` 限定。
@@ -89,9 +98,10 @@
 ## 配置文件约定
 
 - 每个节点包将本节点配置放在 `<node_package>/config/biz_config.toml`，并通过 `CMakeLists.txt` 安装到包的 `share/<node_package>/config/` 目录。
-- 使用 `toml++` 解析 TOML。配置类在节点源码中单独定义，例如 `IntentConfig`；配置类负责定位本节点安装后的 `biz_config.toml`，不在 ROS 节点构造函数或回调中直接解析 TOML。
-- 公共配置读取由 `xc::NodeConfigBase`（位于 `common` 公共代码中）负责。节点配置类继承该基类并传入配置文件路径；基类统一读取 `[logging]`，子类只读取本节点专属配置，不能重复实现日志配置解析。
-- 节点通过成员对象持有自己的配置类，并将基类解析好的 `Logging()` 配置传给 `xc::LogManager`。ROS 节点类本身不继承配置基类。
+- 使用 `toml++` 解析 TOML。节点负责持有并加载本节点配置，例如 `MusicNode` 持有 `MusicConfig` 并在初始化时读取设置；节点专属配置解析可由对应的 `<node>_config.hpp/.cpp` 实现，配置读取不得放进控制器等业务辅助类，也不得放在 ROS 回调中。
+- 可调整的节点业务参数（如程序路径、音频设备、默认关键词和资源路径）放在本节点的 `biz_config.toml` 专属表中；设置结构体中的初始值只作为配置缺失或无效时的回退值，节点将解析后的设置传给控制器。
+- 公共配置读取由 `NodeConfigBase`（位于 `common` 公共代码中）负责。节点配置类继承该基类并传入 ROS 包名；基类统一解析 `XIAOCAI_CONFIG_ROOT/<package>/biz_config.toml` 或安装目录中的 `share/<package>/config/biz_config.toml`，并读取 `[logging]`。子类只读取本节点专属配置，不能重复实现日志配置或路径解析。需要显式配置路径的工具和测试可使用路径构造重载。
+- 节点通过成员对象持有自己的配置类，并将基类解析好的 `Logging()` 配置传给 `LogManager`。节点把解析后的业务设置值传给控制器等辅助类；设置结构体可以定义在配置头文件中并作为值对象传入，但配置文件的加载与解析仍由节点配置类负责。ROS 节点类本身不继承配置基类。
 - 配置字段要有明确类型、默认值和取值范围。文件缺失、解析失败或字段值无效时，按代码中的默认值处理，并输出足以定位配置文件和错误原因的信息。
 
 标准日志配置使用 `[logging]` 表：
@@ -119,7 +129,7 @@ retention_days = 7
 
 ## 日志管理约定
 
-- 节点统一使用 `xc::LogManager` 创建 spdlog logger；节点方法通过 `LOG_INFO(...)`、`LOG_WARN(...)`、`LOG_ERROR(...)` 宏打印日志。宏由 `common/log_manager.hpp` 提供，并转发到当前节点的 `log_manager_` 成员；不要在节点代码中直接调用 `log_manager_.Logger()->...`，也不要各自创建或配置 spdlog logger。
+- 节点统一使用 `LogManager` 创建 spdlog logger；节点方法通过 `LOG_INFO(...)`、`LOG_WARN(...)`、`LOG_ERROR(...)` 宏打印日志。宏由 `common/log_manager.hpp` 提供，并转发到当前节点的 `log_manager_` 成员；不要在节点代码中直接调用 `log_manager_.Logger()->...`，也不要各自创建或配置 spdlog logger。
 - 文件直接放在 `directory` 指定的节点日志根目录，不再为日期创建子目录。文件名使用本地时间：`<node_name>_YYYYMMDD_HHMMSS.log`；按大小轮转后使用 `<node_name>_YYYYMMDD_HHMMSS.1.log`、`<node_name>_YYYYMMDD_HHMMSS.2.log` 等后缀。
 - 同一自然日内重启节点时，继续使用该日期最新的日志文件组；跨日后创建新的时间戳文件组。
 - 默认每个文件不超过 20 MB，每天最多 3 个文件（当前文件加轮转文件），保留最近 7 天。修改这些限制时，以 `biz_config.toml` 中的有效配置为准。
@@ -134,10 +144,19 @@ retention_days = 7
 ## ROS 接口与构建
 
 - 项目机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。
+- `xiaocai_msgs` 中每个 `.msg` 的第一个字段必须是 `builtin_interfaces/Time timestamp`。消息发布者在发布时用本节点 ROS 时钟填写 `timestamp`（`now().to_msg()`），不得留默认零值。
+- 每个 `.srv` 请求部分（`---` 之前）的第一个字段必须是 `builtin_interfaces/Time timestamp`。客户端发送请求时用本节点 ROS 时钟填写；响应字段按业务需要定义，不受该请求字段顺序要求影响。
+- 意图、状态和操作等跨节点枚举统一定义在 `common/include/defination/` 的 C++ `enum class` 中。`.msg` 仅用基础整数类型承载枚举值；新增或调整枚举时同步检查所有生产者、消费者和接口文档。
+- ROS 命令消息按业务域拆分，避免用一个通用消息携带互不相关的可选字段。`Intent.msg` 只承载对话分流意图和原始文本；音乐、音量调节、记忆及提醒操作分别使用 `MusicCommand.msg`、`VolumeCommand.msg` 和 `MemoryCommand.msg`。`IntentType` 只表示仍由对话节点处理的闲聊、音量查询、免打扰开关和提醒澄清；其余操作由各自消息对应的 `MusicAction`、`VolumeAction` 或 `MemoryOperation` 表达。这些枚举统一放在 `common/include/defination/`，不在 `.msg` 中声明枚举常量。
 - 节点间通信使用已有的 `xiaocai_msgs` 消息和服务类型；修改接口时，同时检查所有发布者、订阅者、客户端和服务端。
 - CMake 目标必须列出实际编译的全部 `.cpp` 文件，并声明使用到的 ROS 依赖；`package.xml` 中同步维护包依赖。
 - 项目使用 C++17。CMake 配置应支持生成 `compile_commands.json`，供 VS Code IntelliSense 使用。
 - 新增 ROS 依赖时，同时更新 `CMakeLists.txt` 和 `package.xml`，并确认交叉编译 sysroot 中包含相应依赖。
+
+## clang-format Git hook
+
+- 仓库通过 `.githooks/pre-commit` 在提交时格式化已暂存的项目 C/C++ 文件，使用仓库根目录的 `.clang-format`。第三方代码不由此 hook 格式化。
+- 如果暂存文件同时含有未暂存修改，hook 会停止提交，避免格式化时把未准备提交的内容一并暂存。先整理该文件的暂存状态，再重新提交。
 
 ## 变更检查
 

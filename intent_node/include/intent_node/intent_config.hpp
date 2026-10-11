@@ -4,8 +4,12 @@
 
 #include <filesystem>
 
-class IntentConfig : public xc::NodeConfigBase {
+namespace xiaocai_robot {
+
+class IntentConfig : public NodeConfigBase {
 public:
   IntentConfig();
   explicit IntentConfig(std::filesystem::path config_path);
 };
+
+} // namespace xiaocai_robot

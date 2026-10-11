@@ -1,11 +1,34 @@
 #include "common/node_config_base.hpp"
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
 
-namespace xc {
+namespace xiaocai_robot {
+
+namespace {
+
+std::filesystem::path ResolveConfigPath(const char *package_name) {
+  if (package_name == nullptr || *package_name == '\0') {
+    throw std::invalid_argument("config package name must not be empty");
+  }
+  if (const char *root = std::getenv("XIAOCAI_CONFIG_ROOT"); root && *root) {
+    return std::filesystem::path(root) / package_name / "biz_config.toml";
+  }
+  return std::filesystem::path(
+             ament_index_cpp::get_package_share_directory(package_name)) /
+         "config" / "biz_config.toml";
+}
+
+} // namespace
+
+NodeConfigBase::NodeConfigBase(const char *package_name)
+    : NodeConfigBase(ResolveConfigPath(package_name)) {}
 
 NodeConfigBase::NodeConfigBase(std::filesystem::path config_path)
     : config_path_(std::move(config_path)) {
@@ -34,7 +57,8 @@ void NodeConfigBase::Load() {
     }
     if (auto value = (*logging)["max_file_size_mb"].value<std::int64_t>()) {
       if (*value > 0 && *value <= 1024) {
-        logging_.max_file_size_bytes = static_cast<std::size_t>(*value) * 1024U * 1024U;
+        logging_.max_file_size_bytes =
+            static_cast<std::size_t>(*value) * 1024U * 1024U;
       }
     }
     if (auto value = (*logging)["max_files_per_day"].value<std::int64_t>()) {
@@ -48,9 +72,9 @@ void NodeConfigBase::Load() {
       }
     }
   } catch (const std::exception &error) {
-    std::cerr << "[node_config] Unable to read " << config_path_ << ": " << error.what()
-              << "; using built-in configuration defaults\n";
+    std::cerr << "[node_config] Unable to read " << config_path_ << ": "
+              << error.what() << "; using built-in configuration defaults\n";
   }
 }
 
-}  // namespace xc
+} // namespace xiaocai_robot

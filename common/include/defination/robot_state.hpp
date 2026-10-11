@@ -13,4 +13,4 @@ enum class RobotState : std::uint8_t {
   Muted = 5,
 };
 
-}  // namespace xiaocai_robot::common
+} // namespace xiaocai_robot::common

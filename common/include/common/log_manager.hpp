@@ -2,12 +2,12 @@
 
 #include <spdlog/logger.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string>
-#include <cstddef>
 
-namespace xc {
+namespace xiaocai_robot {
 
 struct LogManagerConfig {
   std::filesystem::path directory;
@@ -32,7 +32,7 @@ private:
   std::shared_ptr<spdlog::logger> logger_;
 };
 
-}  // namespace xc
+} // namespace xiaocai_robot
 
 // Node methods use these macros to write through their `log_manager_` member.
 #define LOG_INFO(...) log_manager_.Logger()->info(__VA_ARGS__)

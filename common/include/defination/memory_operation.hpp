@@ -13,4 +13,4 @@ enum class MemoryOperation : std::uint8_t {
   GetQuiet = 6,
 };
 
-}  // namespace xiaocai_robot::common
+} // namespace xiaocai_robot::common

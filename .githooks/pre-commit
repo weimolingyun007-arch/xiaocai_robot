@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+formatter="${CLANG_FORMAT:-clang-format}"
+if ! command -v "$formatter" >/dev/null 2>&1; then
+  echo "pre-commit: clang-format is required but was not found" >&2
+  exit 1
+fi
+
+while IFS= read -r -d '' file; do
+  case "$file" in
+    thirdparty/*) continue ;;
+  esac
+
+  if ! git diff --quiet -- "$file"; then
+    echo "pre-commit: $file has unstaged changes; stage or discard them before committing" >&2
+    exit 1
+  fi
+
+  "$formatter" -i -- "$file"
+  git add -- "$file"
+done < <(git diff --cached --name-only --diff-filter=ACMR -z -- \
+  '*.c' '*.h' '*.hh' '*.hpp' '*.hxx' '*.cc' '*.cpp' '*.cxx')

@@ -5,17 +5,26 @@
 #include <cstdint>
 #include <string>
 
+namespace xiaocai_robot {
+
 struct SpeechInputSettings {
-  std::string wake_model_path{"/home/lckfb/xiaocai_robot/resource/speech/vosk-model-small-cn-0.22"};
-  std::string sense_model_path{"/home/lckfb/xiaocai_robot/resource/speech/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx"};
-  std::string sense_tokens_path{"/home/lckfb/xiaocai_robot/resource/speech/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt"};
-  std::string vad_model_path{"/home/lckfb/xiaocai_robot/resource/speech/silero_vad.onnx"};
-  std::string wake_ack_path{"/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"};
+  std::string wake_model_path{
+      "/home/lckfb/xiaocai_robot/resource/speech/vosk-model-small-cn-0.22"};
+  std::string sense_model_path{"/home/lckfb/xiaocai_robot/resource/speech/"
+                               "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-"
+                               "2024-07-17/model.int8.onnx"};
+  std::string sense_tokens_path{
+      "/home/lckfb/xiaocai_robot/resource/speech/"
+      "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt"};
+  std::string vad_model_path{
+      "/home/lckfb/xiaocai_robot/resource/speech/silero_vad.onnx"};
+  std::string wake_ack_path{
+      "/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"};
   double input_gain{6.0};
   double inactivity_timeout_sec{120.0};
 };
 
-class SpeechInputConfig : public xc::NodeConfigBase {
+class SpeechInputConfig : public NodeConfigBase {
 public:
   SpeechInputConfig();
   const SpeechInputSettings &Settings() const noexcept { return settings_; }
@@ -23,3 +32,5 @@ public:
 private:
   SpeechInputSettings settings_;
 };
+
+} // namespace xiaocai_robot

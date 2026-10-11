@@ -51,7 +51,7 @@ bash bringup/scripts/start_all_node.sh
 | `get_current_time` | C++ 读取板端系统时钟，返回北京时间、日期、星期；准确性依赖板端时钟 |
 | `get_volume` | 调用 `/xiaocai_robot/audio/get_volume` 服务 |
 | `set_volume` | 发布 `/xiaocai_robot/audio/volume/command`，等待实际音量反馈；范围 0–150，超过100时语音和音乐一起增强，最多 +6 dB |
-| `control_music` | 发布音乐 Intent，等待 `music_node` 返回相同请求编号的状态；支持播放、暂停、继续、停止、上/下一首 |
+| `control_music` | 发布 `MusicCommand`，等待 `music_node` 返回相同请求编号的状态；支持播放、暂停、继续、停止、上/下一首 |
 | `get_music_status` | 读取 `music_node` 最新播放状态、歌曲名和进度 |
 | `save_memory` / `forget_memory` / `list_memories` | 请求 `memory_node`，等待 SQLite 操作结果 |
 | `create_reminder` | 请求 `memory_node` 保存延时提醒；最长 30 天 |
@@ -69,7 +69,7 @@ bash bringup/scripts/start_all_node.sh
 
 HTTP 和工具等待使用独立工作线程，ROS 主线程继续处理服务反馈。“闭嘴”和新的唤醒会取消旧的云端任务；一次请求后的自动休眠不会取消该任务。最多 4 轮工具执行、8 次工具调用；对参数和工具名称进行本地校验，不提供任意 shell 工具。同一 `tool_call_id` 不会重复执行。超时可能已经产生效果的修改操作不会由程序自动重试。
 
-成功播放或继续音乐后，歌曲作为声音反馈，不再朗读模型最终确认，避免 TTS 把刚开始的音乐暂停。模型仍收到工具结果并生成最终确认；播放失败由对话节点根据错误回复。音乐 Intent 和 MusicState 的 `request_id` 用于匹配工具请求，普通本地命令可留空。
+成功播放或继续音乐后，歌曲作为声音反馈，不再朗读模型最终确认，避免 TTS 把刚开始的音乐暂停。模型仍收到工具结果并生成最终确认；播放失败由对话节点根据错误回复。`MusicCommand` 和 `MusicState` 的 `request_id` 用于匹配工具请求，普通本地命令为 0。
 
 回归测试源码位于 `dialogue_node/tests/`：模拟 DeepSeek HTTP 协议，但使用真实 ROS 执行器和消息/服务验证工具执行、错误参数、重复调用、音乐反馈关联及取消。可在已配置的 CMake 构建目录启用 `-DXIAOCAI_BUILD_TOOL_TESTS=ON`，构建 `dialogue_tool_calls_test`；测试要在隔离 ROS_DOMAIN_ID 下运行，启动 `mock_deepseek.py`，并把测试节点的 `api_url` 设为 `http://127.0.0.1:18763`，设置虚拟 `DEEPSEEK_API_KEY`。默认编译和运行包不包含测试程序。
 
@@ -115,9 +115,10 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/audio/volume/command`：音量设置和增减命令，类型为 `xiaocai_msgs/msg/VolumeCommand`
 - `/xiaocai_robot/speech/text`：唤醒后的语音识别文字
 - `/xiaocai_robot/speech/awake`：唤醒状态
-- `/xiaocai_robot/intent`：识别出的结构化意图，类型为 `xiaocai_msgs/msg/Intent`；工具发出的音乐命令含 `request_id`
+- `/xiaocai_robot/intent`：对话意图，类型为 `xiaocai_msgs/msg/Intent`，只承载闲聊、音量查询、免打扰开关和提醒澄清
+- `/xiaocai_robot/music/command`：音乐操作，类型为 `xiaocai_msgs/msg/MusicCommand`，字段 `action`、`query`、`request_id`
 - `/xiaocai_robot/tts/text`：待合成的回复文字
-- `/xiaocai_robot/audio/play`：待播放 WAV 路径，类型为 `xiaocai_msgs/msg/AudioPlay`，字段 `path`
+- `/xiaocai_robot/audio/play`：待播放 WAV 路径，类型为 `xiaocai_msgs/msg/AudioPlay`；`path` 为空时停止播放并清空待播队列
 - `/xiaocai_robot/state`：机器人状态，类型为 `xiaocai_msgs/msg/RobotState`，字段 `state`
 - `/xiaocai_robot/memory/command`：记忆操作请求，类型为 `xiaocai_msgs/msg/MemoryCommand`，字段 `operation`、`request_id`、`content`、`delay_seconds`、`enabled`
 - `/xiaocai_robot/memory/result`：记忆操作结果，类型为 `xiaocai_msgs/msg/MemoryResult`，字段 `operation`、`request_id`、`ok`、`error`、`facts`、`content`、`deleted`、`enabled`
@@ -125,13 +126,15 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/music/state`：音乐状态，类型为 `xiaocai_msgs/msg/MusicState`，字段 `state`、`title`、`position_seconds`、`duration_seconds`、`error`、`request_id`
 - `/xiaocai_robot/audio/get_volume`：读取当前音量的服务（`xiaocai_msgs/srv/GetVolume`）
 
-所有机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。`Intent`、`VolumeCommand`、`RobotState`、`MemoryCommand`、`MemoryResult`、`AudioPlay` 和 `Reminder` 都使用 `xiaocai_msgs` 自定义消息。状态与操作码的数值只在 `common/include/defination/` 的 C++ 枚举中定义；消息的 `uint8` 字段承载这些值，`.msg` 文件不重复声明枚举常量。自定义接口定义位于 `xiaocai_msgs/msg/` 与 `xiaocai_msgs/srv/`，由 `make build` 先生成，再编译依赖节点。
+`Intent.type` 使用 `uint8` 承载 `xiaocai_robot::common::IntentType` 的枚举值；该枚举只表示对话节点处理的闲聊、音量查询、免打扰开关和提醒澄清，名称和值定义在 `common/include/defination/intent_type.hpp`。音乐、音量调节、记忆和提醒创建分别通过 `MusicCommand`、`VolumeCommand`、`MemoryCommand` 传递，并使用 `MusicAction`、`VolumeAction`、`MemoryOperation` 表示操作类型；这些枚举定义在 `common/include/defination/`。`MusicCommand.request_id` 与 `MusicState.request_id` 使用 `uint64`；`0` 表示普通语音命令，音乐工具请求使用非零编号并由 `MusicState` 原样回传。所有 `xiaocai_msgs` 消息和服务请求的首字段均为 `builtin_interfaces/Time timestamp`，发送时填写本节点 ROS 时钟。
+
+所有机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。对话意图、音乐操作、音量操作和记忆操作使用各自的自定义命令消息，避免把无关业务参数混装在一个通用消息中。状态与操作枚举统一在 `common/include/defination/` 的 C++ 枚举中定义，由消息的整数型字段承载；`.msg` 不声明重复的枚举常量。每个自定义消息以及服务请求部分的首字段都是 `builtin_interfaces/Time timestamp`。自定义接口定义位于 `xiaocai_msgs/msg/` 与 `xiaocai_msgs/srv/`，由 `make build` 先生成，再编译依赖节点。
 
 ## 网易云语音点歌
 
 板端需已安装 `/usr/local/bin/ncm-cli`（官方 `@music163/ncm-cli`）及 `mpv`，并在 `lckfb` 用户下配置开放平台凭证和扫码登录。CLI 运行时安装在 `/opt/ncm-cli`，账号配置位于 `/home/lckfb/.config/ncm-cli/`，更新机器人运行包时会保留。机器人依赖的 CLI、mpv 与 ROS 2 一样由板端预先安装。
 
-唤醒后可以说“播放晴天”“放一首歌”“暂停音乐”“继续播放”“停止播放音乐”“下一首”“上一首”。不指定歌名时搜索轻音乐。`intent_node` 发布 `music_play`、`music_pause`、`music_resume`、`music_stop`、`music_next` 或 `music_previous` 意图，歌名放在 `Intent.content`。`music_node` 处理这些意图，点歌时会把搜索结果里后续最多 5 首可播放歌曲加入网易云队列，并循环播放队列。唤醒词会结束当前连续播放。`dialogue_node` 跳过音乐意图。点歌失败时本地语音提示，不请求 DeepSeek。
+唤醒后可以说“播放晴天”“放一首歌”“暂停音乐”“继续播放”“停止播放音乐”“下一首”“上一首”。不指定歌名时搜索轻音乐。`intent_node` 发布 `MusicCommand`，用 `MusicAction` 表示动作、`query` 表示歌名或关键词；`music_node` 处理命令，点歌时会把搜索结果里后续最多 5 首可播放歌曲加入网易云队列，并循环播放队列。唤醒词会结束当前连续播放。点歌失败时本地语音提示，不请求 DeepSeek。
 
 音量范围是 0–150，启动默认为 150。RK809 DAC 在 100% 已达硬件满量程；100% 以上通过共享 ALSA `softvol` PCM 对语音和音乐一起增加数字增益，最高额外 +6 dB。唤醒提示音保留峰值余量，避免最大增益时削波；唤醒后可通过“音量调低一点”逐步调整，也可指定 150%。
 

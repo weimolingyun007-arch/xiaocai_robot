@@ -11,4 +11,4 @@ enum class VolumeAction : std::uint8_t {
   Set = 3,
 };
 
-}  // namespace xiaocai_robot::common
+} // namespace xiaocai_robot::common
