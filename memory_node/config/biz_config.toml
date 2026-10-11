@@ -8,4 +8,4 @@ max_files_per_day = 3
 retention_days = 7
 
 [memory]
-db_path = "/home/lckfb/xiaocai_robot/resource/memory.sqlite3"
+db_path = "resource/memory.sqlite3"

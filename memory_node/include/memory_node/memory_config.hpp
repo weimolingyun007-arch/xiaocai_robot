@@ -8,7 +8,7 @@
 namespace xiaocai_robot {
 
 struct MemorySettings {
-  std::string db_path{"/home/lckfb/xiaocai_robot/resource/memory.sqlite3"};
+  std::string db_path{"resource/memory.sqlite3"};
 };
 
 class MemoryConfig : public NodeConfigBase {
