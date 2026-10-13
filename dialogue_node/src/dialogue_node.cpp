@@ -28,7 +28,7 @@ void DialogueNode::InitPublishers() {
       create_publisher<std_msgs::msg::String>("/xiaocai_robot/tts/text", 10);
   ++initialized_count;
   state_publisher_ = create_publisher<xiaocai_msgs::msg::RobotState>(
-      "/xiaocai_robot/state", 10);
+      "/xiaocai_robot/state", rclcpp::QoS(1).transient_local());
   ++initialized_count;
   memory_publisher_ = create_publisher<xiaocai_msgs::msg::MemoryCommand>(
       "/xiaocai_robot/memory/command", 10);

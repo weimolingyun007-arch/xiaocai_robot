@@ -8,12 +8,15 @@ fi
 
 cd "$workspace"
 export HOME="${HOME:-/home/lckfb}"
+export DISPLAY="${DISPLAY:-:0}"
+export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 export ROS_LOG_DIR="${ROS_LOG_DIR:-/tmp/xiaocai_ros_logs}"
 mkdir -p "$ROS_LOG_DIR"
 source /opt/ros/humble/setup.bash
 export LD_LIBRARY_PATH="$workspace/msgs:$workspace/thirdparty/onnxruntime:$workspace/thirdparty/sherpa-onnx:$workspace/thirdparty/vosk:$workspace/thirdparty:${LD_LIBRARY_PATH:-}"
 export ALSA_CONFIG_PATH="$workspace/resource/audio/asound.conf"
 export XIAOCAI_CONFIG_ROOT="$workspace/config"
+export XIAOCAI_RESOURCE_ROOT="$workspace/resource"
 source "$workspace/resource/deepseek.env"
 
 log_dir="${XIAOCAI_LOG_DIR:-/tmp/xiaocai_logs}"
@@ -34,7 +37,11 @@ trap 'exit 0' INT TERM
 
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
-for module in audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node; do
+if command -v xrandr >/dev/null 2>&1; then
+  xrandr --output DSI-1 --rotate right
+fi
+
+for module in audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node; do
   executable="$workspace/bin/$module"
   if [ "$module" = dialogue_node ]; then
     DEEPSEEK_API_KEY="$DEEPSEEK_API_KEY" "$executable" >"$log_dir/${module}.log" 2>&1 &

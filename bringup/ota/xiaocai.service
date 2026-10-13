@@ -1,7 +1,7 @@
 [Unit]
 Description=Xiaocai ROS 2 Companion
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target display-manager.service
+After=network-online.target display-manager.service
 
 [Service]
 Type=simple
@@ -9,6 +9,8 @@ User=lckfb
 Group=lckfb
 WorkingDirectory=/home/lckfb/xiaocai_robot
 Environment=HOME=/home/lckfb
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/lckfb/.Xauthority
 Environment=ROS_LOG_DIR=/tmp/xiaocai_ros_logs
 Environment=XIAOCAI_LOG_DIR=/tmp/xiaocai_logs
 ExecStart=/bin/bash /home/lckfb/xiaocai_robot/bringup/scripts/start_all_node.sh

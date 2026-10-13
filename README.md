@@ -4,7 +4,7 @@
 
 ## 工程结构
 
-七个 ROS 2 节点目录直接放在工程根目录。每个节点目录包含自己的 `include/`、`src/`、`CMakeLists.txt` 和 `package.xml`。
+八个 ROS 2 节点目录直接放在工程根目录。每个节点目录包含自己的 `include/`、`src/`、`CMakeLists.txt` 和 `package.xml`。
 
 | 目录 | 职责 |
 | --- | --- |
@@ -15,6 +15,7 @@
 | `memory_node` | SQLite 记忆、免打扰状态和提醒 |
 | `tts_node` | sherpa-onnx 离线中文语音合成 |
 | `music_node` | 调用网易云 ncm-cli 搜歌、播放及控制 |
+| `display_node` | 根据机器人状态在横屏上显示简约青色表情 |
 | `common` | 节点共享的配置基类、日志管理、业务枚举和 MPV 辅助函数 |
 | `thirdparty` | C++ 头文件和 ARM64 动态库 |
 | `xiaocai_msgs` | ROS 2 自定义消息和服务接口源码 |
@@ -91,7 +92,7 @@ make ota
 make deploy
 ```
 
-`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。七个可执行文件集中在 `bin/`；七个节点的 `biz_config.toml` 放在 `config/<节点名>/`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 加载；语音模型和唤醒提示音分别放在 `resource/speech/`、`resource/tts/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。`bringup/` 包含启停脚本和 systemd 服务单元。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
+`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。八个可执行文件集中在 `bin/`；八个节点的 `biz_config.toml` 放在 `config/<节点名>/`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 加载；语音模型和唤醒提示音放在 `resource/speech/`、语音合成模型放在 `resource/tts/`、六种表情素材放在 `resource/display/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。`bringup/` 包含启停脚本和 systemd 服务单元。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
 
 `make deploy` 调用 ADB 部署脚本，将最新压缩包传到板端 `/home/lckfb/xiaocai_robot`，替换整个运行目录并重启服务；它不会重新编译或打包。板端运行目录包含 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。
 
@@ -151,3 +152,5 @@ sudo bash bringup/ota/install_autostart.sh
 播放期间识别器不处理“停止音乐”这类普通音乐命令；唤醒词本身会先停止循环播放，随后可以在这一轮请求中说“停止音乐”。“闭嘴”会停止当前音乐和语音播放、清空待播音频并取消正在执行的音乐或对话请求，之后需要重新唤醒。语音输出与音乐都经由共享 ALSA `softvol` PCM（底层为 `plug:dmix`）；语音开始播放时音乐会暂停。普通语音播完后不会自动恢复音乐，之后的播放、继续或切歌命令会等待语音结束再执行。
 
 `MusicState.state` 的数值在 `common/include/defination/music_state.hpp` 定义：0 停止、1 搜索中、2 播放、3 暂停、4 错误。音乐状态话题支持保留最后一条消息，语音节点重启后也能获取播放状态。歌曲能否播放取决于开放平台和账号权限，节点只选择平台标记当前账号可播放的搜索结果。
+
+`dialogue_node` 根据唤醒、音频播放和对话处理事件决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点晚于对话节点启动时也能读取最近状态。

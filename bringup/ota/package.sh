@@ -24,8 +24,12 @@ trap Cleanup EXIT
 payload="$temp_dir/xiaocai_robot"
 mkdir -p "$payload/bin" "$payload/config" "$payload/resource" "$payload/thirdparty" "$payload/msgs" "$payload/bringup/scripts" "$payload/bringup/systemd"
 install -D -m 0644 "$workspace/audio_io_node/assets/asound.conf" "$payload/resource/audio/asound.conf"
+for expression in idle listening thinking speaking quiet muted; do
+  install -D -m 0644 "$workspace/display_node/assets/$expression.ppm" \
+    "$payload/resource/display/$expression.ppm"
+done
 
-modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node)
+modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node)
 for module in "${modules[@]}"; do
   install -D -m 0644 "$workspace/$module/config/biz_config.toml" "$payload/config/$module/biz_config.toml"
 done
@@ -127,13 +131,13 @@ gzip -t "$temp_archive"
 
 if ! tar -tzf "$temp_archive" | awk '
 BEGIN {
-  split("audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node", names, " ")
+  split("audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node", names, " ")
   for (i in names) node[names[i]]=1
 }
 {
   path=$0
   sub(/\/$/, "", path)
-  if (path == "xiaocai_robot" || path == "xiaocai_robot/bin" || path == "xiaocai_robot/config" || path == "xiaocai_robot/resource" || path == "xiaocai_robot/resource/speech" || path == "xiaocai_robot/resource/tts" || path == "xiaocai_robot/resource/audio" || path == "xiaocai_robot/thirdparty" || path == "xiaocai_robot/msgs" || path == "xiaocai_robot/bringup" || path == "xiaocai_robot/bringup/scripts" || path == "xiaocai_robot/bringup/systemd") next
+  if (path == "xiaocai_robot" || path == "xiaocai_robot/bin" || path == "xiaocai_robot/config" || path == "xiaocai_robot/resource" || path == "xiaocai_robot/resource/speech" || path == "xiaocai_robot/resource/tts" || path == "xiaocai_robot/resource/audio" || path == "xiaocai_robot/resource/display" || path == "xiaocai_robot/thirdparty" || path == "xiaocai_robot/msgs" || path == "xiaocai_robot/bringup" || path == "xiaocai_robot/bringup/scripts" || path == "xiaocai_robot/bringup/systemd") next
   count=split(path, part, "/")
   if (count == 3 && part[1] == "xiaocai_robot" && part[2] == "config" && (part[3] in node)) next
   if (count == 4 && part[1] == "xiaocai_robot" && part[2] == "config" && (part[3] in node) && part[4] == "biz_config.toml") { configs[part[3]]++; next }
@@ -147,6 +151,7 @@ BEGIN {
   if (path == "xiaocai_robot/bringup/scripts/stop_all_node.sh") { stop_script++; next }
   if (path == "xiaocai_robot/bringup/systemd/xiaocai.service") { service_unit++; next }
   if (count >= 4 && part[1] == "xiaocai_robot" && part[2] == "resource" && (part[3] == "speech" || part[3] == "tts")) { assets++; next }
+  if (count == 4 && part[1] == "xiaocai_robot" && part[2] == "resource" && part[3] == "display" && part[4] ~ /^(idle|listening|thinking|speaking|quiet|muted)\.ppm$/) { display_assets++; next }
   if (path == "xiaocai_robot/resource/audio/asound.conf") { alsa_config++; next }
   print "Unexpected package entry: " path > "/dev/stderr"
   invalid=1
@@ -154,7 +159,7 @@ BEGIN {
 END {
   for (name in node) if (executable[name] != 1) { print "Missing executable: " name > "/dev/stderr"; invalid=1 }
   for (name in node) if (configs[name] != 1) { print "Missing node config: " name > "/dev/stderr"; invalid=1 }
-  if (libraries == 0 || interface_libraries == 0 || assets == 0 || alsa_config != 1 || start_script != 1 || stop_script != 1 || service_unit != 1) { print "Missing runtime dependency, custom message library, asset, ALSA configuration, bringup script, or systemd unit" > "/dev/stderr"; invalid=1 }
+  if (libraries == 0 || interface_libraries == 0 || assets == 0 || display_assets != 6 || alsa_config != 1 || start_script != 1 || stop_script != 1 || service_unit != 1) { print "Missing runtime dependency, custom message library, asset, ALSA configuration, bringup script, or systemd unit" > "/dev/stderr"; invalid=1 }
   if (invalid) exit 1
 }'; then
   echo "Package must contain only node executables, runtime libraries, model assets, bringup scripts, and the systemd unit." >&2

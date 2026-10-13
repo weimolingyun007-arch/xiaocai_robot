@@ -1,6 +1,6 @@
 # ROS 节点代码结构与编写规范
 
-本文是 `xiaocai_robot` 项目所有 ROS 节点的统一规范，适用于 `audio_io_node`、`speech_input_node`、`intent_node`、`dialogue_node`、`memory_node`、`tts_node` 和 `music_node`。规范以 `intent_node` 当前拆分出的节点类与业务逻辑类为结构参考。
+本文是 `xiaocai_robot` 项目所有 ROS 节点的统一规范，适用于 `audio_io_node`、`speech_input_node`、`intent_node`、`dialogue_node`、`memory_node`、`tts_node`、`music_node` 和 `display_node`。规范以 `intent_node` 当前拆分出的节点类与业务逻辑类为结构参考。
 
 ## 目录结构
 

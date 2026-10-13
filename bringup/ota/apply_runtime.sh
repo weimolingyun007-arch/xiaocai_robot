@@ -103,7 +103,7 @@ mkdir -p "$stage"
 tar -xzf "$archive" -C "$stage" --no-same-owner
 [[ -z "$(find "$payload" -type l -print -quit)" ]] || { echo 'Package contains a symbolic link.' >&2; exit 1; }
 
-modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node)
+modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node)
 for module in "${modules[@]}"; do
   [[ -f "$payload/config/$module/biz_config.toml" ]] || { echo "Package is missing config: $module/biz_config.toml" >&2; exit 1; }
 done
@@ -118,6 +118,12 @@ done
 for required in \
   resource/speech/wake_ack.wav \
   resource/audio/asound.conf \
+  resource/display/idle.ppm \
+  resource/display/listening.ppm \
+  resource/display/thinking.ppm \
+  resource/display/speaking.ppm \
+  resource/display/quiet.ppm \
+  resource/display/muted.ppm \
   resource/speech/silero_vad.onnx \
   resource/speech/vosk-model-small-cn-0.22/am/final.mdl \
   resource/speech/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \
@@ -156,6 +162,9 @@ for suffix in '' -wal -shm -journal; do
 done
 [[ -f "$payload/resource/deepseek.env" && -f "$payload/resource/memory.sqlite3" ]] || { echo 'Runtime state migration failed.' >&2; exit 1; }
 chown -R lckfb:lckfb "$payload"
+for module in "${modules[@]}"; do
+  install -d -o lckfb -g lckfb -m 0755 "/userdata/log/$module"
+done
 mv "$source_workspace" "$backup"
 replaced=1
 mv "$payload" "$workspace"
