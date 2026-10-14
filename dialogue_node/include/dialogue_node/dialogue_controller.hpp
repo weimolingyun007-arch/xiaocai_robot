@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/log_manager.hpp"
+#include "defination/conversation_phase.hpp"
 #include "defination/intent_type.hpp"
 #include "defination/memory_operation.hpp"
 #include "defination/music_action.hpp"
@@ -63,7 +64,8 @@ struct DialogueCallbacks {
   using VolumeResponseCallback =
       std::function<void(DialogueVolumeResult result)>;
 
-  std::function<void(const std::string &)> speak;
+  std::function<void(const std::string &, std::uint64_t)> speak;
+  std::function<void(common::ConversationPhase, bool)> publish_conversation;
   std::function<void(common::RobotState)> publish_state;
   std::function<void(const DialogueMemoryCommand &)> publish_memory_command;
   std::function<void(common::VolumeAction, int)> publish_volume_command;
@@ -91,6 +93,8 @@ public:
   void HandleMusicState(const DialogueMusicStatus &status);
   void HandleAudioPlay(const std::string &path);
   void HandleTimerTick();
+  void HandleConversationTurn(bool expects_speech);
+  void HandleTtsResult(std::uint64_t request_id, bool success);
 
 private:
   struct ChatJob {
@@ -99,7 +103,10 @@ private:
   };
 
   // Conversation lifecycle and user-facing responses.
-  void Speak(const std::string &text);
+  void Speak(const std::string &text, bool expect_reply = false);
+  void SetConversation(common::ConversationPhase phase,
+                       bool expect_reply = false);
+  void PublishCurrentState();
   void RequestMemory(common::MemoryOperation operation,
                      const std::string &content = {},
                      std::int32_t delay_seconds = 0, bool enabled = false);
@@ -147,6 +154,14 @@ private:
   std::map<std::string, common::MemoryOperation> pending_;
   std::vector<std::string> held_;
   std::vector<nlohmann::json> history_;
+  std::mutex conversation_mutex_;
+  common::ConversationPhase conversation_phase_;
+  bool expect_reply_;
+  bool audio_playing_;
+  bool music_searching_;
+  std::uint64_t next_reply_id_;
+  std::map<std::uint64_t, bool> pending_replies_;
+  std::string clarification_context_;
 };
 
 } // namespace xiaocai_robot

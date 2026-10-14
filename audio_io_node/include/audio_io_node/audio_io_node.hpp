@@ -3,6 +3,7 @@
 #include "common/common.hpp"
 #include "common/log_manager.hpp"
 #include "xiaocai_msgs/msg/audio_play.hpp"
+#include "xiaocai_msgs/msg/audio_playback_result.hpp"
 #include "xiaocai_msgs/msg/volume_command.hpp"
 #include "xiaocai_msgs/srv/get_volume.hpp"
 #include <atomic>
@@ -25,16 +26,26 @@ public:
   ~AudioIoNode() override;
 
 private:
+  // ROS communication initialization.
   void InitPublishers();
   void InitSubscribers();
   void InitServers();
+
+  // ROS message publishing.
+  void PublishPlaybackResult(const std::string &path, bool success);
+
+  // ROS subscription callbacks.
   void
   OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay::SharedPtr message);
   void OnVolumeCommandCallback(
       const xiaocai_msgs::msg::VolumeCommand::SharedPtr message);
+
+  // Playback configuration and PCM helpers.
+  void SetVolume(int percent, bool notify = false);
   void MakeBeep();
   void MakeSilence();
-  void SetVolume(int percent, bool notify = false);
+
+  // Audio worker loops.
   void CaptureLoop();
   void PlaybackLoop();
   AudioIoConfig audio_io_config_;
@@ -51,6 +62,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr mic_publisher_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr playing_publisher_;
   rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr volume_state_publisher_;
+  rclcpp::Publisher<xiaocai_msgs::msg::AudioPlaybackResult>::SharedPtr
+      playback_result_publisher_;
   rclcpp::Subscription<xiaocai_msgs::msg::AudioPlay>::SharedPtr
       play_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::VolumeCommand>::SharedPtr

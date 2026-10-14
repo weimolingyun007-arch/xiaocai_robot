@@ -3,6 +3,7 @@
 #include "defination/music_state.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -11,7 +12,7 @@ namespace xiaocai_robot {
 SpeechInputNode::SpeechInputNode()
     : Node("speech_input_node"), speech_input_config_(),
       log_manager_("speech_input_node", speech_input_config_.Logging()),
-      speech_input_controller_() {
+      speech_input_controller_(), last_wake_at_(0, 0, RCL_ROS_TIME) {
   InitPublishers();
   InitSubscribers();
   InitController();
@@ -52,6 +53,13 @@ void SpeechInputNode::InitSubscribers() {
         OnMusicStateCallback(*message);
       });
   ++initialized_count;
+  conversation_subscriber_ =
+      create_subscription<xiaocai_msgs::msg::ConversationState>(
+          "/xiaocai_robot/dialogue/state", 10,
+          [this](xiaocai_msgs::msg::ConversationState::SharedPtr message) {
+            OnConversationStateCallback(*message);
+          });
+  ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
@@ -73,8 +81,10 @@ void SpeechInputNode::InitController() {
     throw std::runtime_error("input_gain must be in (0, 30]");
   settings.inactivity_timeout_sec = declare_parameter<double>(
       "inactivity_timeout_sec", settings.inactivity_timeout_sec);
-  if (settings.inactivity_timeout_sec < 1.0)
-    throw std::runtime_error("inactivity_timeout_sec must be at least 1");
+  if (!std::isfinite(settings.inactivity_timeout_sec) ||
+      settings.inactivity_timeout_sec < 1.0)
+    throw std::runtime_error(
+        "inactivity_timeout_sec must be finite and at least 1");
 
   SpeechInputCallbacks callbacks;
   callbacks.publish_text = [this](const std::string &text) {
@@ -108,6 +118,8 @@ void SpeechInputNode::PublishAudioPlay(const std::string &path) {
 }
 
 void SpeechInputNode::PublishAwake(bool awake) {
+  if (awake)
+    last_wake_at_ = now();
   std_msgs::msg::Bool message;
   message.data = awake;
   awake_publisher_->publish(message);
@@ -126,6 +138,16 @@ void SpeechInputNode::OnMusicStateCallback(
     const xiaocai_msgs::msg::MusicState &message) {
   speech_input_controller_->HandleMusicState(
       static_cast<common::MusicState>(message.state));
+}
+
+void SpeechInputNode::OnConversationStateCallback(
+    const xiaocai_msgs::msg::ConversationState &message) {
+  // A delayed end notification from an earlier wake must not close a new wake.
+  if (rclcpp::Time(message.timestamp) < last_wake_at_)
+    return;
+  speech_input_controller_->HandleConversation(
+      static_cast<common::ConversationPhase>(message.phase),
+      message.expect_reply);
 }
 
 } // namespace xiaocai_robot

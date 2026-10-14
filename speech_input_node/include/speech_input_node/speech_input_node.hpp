@@ -9,6 +9,7 @@
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <xiaocai_msgs/msg/audio_play.hpp>
+#include <xiaocai_msgs/msg/conversation_state.hpp>
 #include <xiaocai_msgs/msg/music_state.hpp>
 
 #include <memory>
@@ -37,6 +38,9 @@ private:
   void OnAudioPlayingCallback(bool playing);
   void OnMusicStateCallback(const xiaocai_msgs::msg::MusicState &message);
 
+  void OnConversationStateCallback(
+      const xiaocai_msgs::msg::ConversationState &message);
+
   SpeechInputConfig speech_input_config_;
   LogManager log_manager_;
   std::unique_ptr<SpeechInputController> speech_input_controller_;
@@ -48,7 +52,10 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr playing_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::MusicState>::SharedPtr
       music_subscriber_;
+  rclcpp::Subscription<xiaocai_msgs::msg::ConversationState>::SharedPtr
+      conversation_subscriber_;
   rclcpp::TimerBase::SharedPtr result_timer_;
+  rclcpp::Time last_wake_at_;
 };
 
 } // namespace xiaocai_robot

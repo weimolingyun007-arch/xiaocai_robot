@@ -3,11 +3,14 @@
 #include "common/node_config_base.hpp"
 
 #include <filesystem>
+#include <string>
 
 namespace xiaocai_robot {
 
 struct DisplaySettings {
   std::filesystem::path asset_directory{"display"};
+  std::string font_family{"Noto Sans CJK SC"};
+  std::string wifi_interface{"wlan0"};
 };
 
 class DisplayConfig : public NodeConfigBase {

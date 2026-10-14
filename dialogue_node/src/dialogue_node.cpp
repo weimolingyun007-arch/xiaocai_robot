@@ -24,8 +24,8 @@ DialogueNode::~DialogueNode() { dialogue_controller_.reset(); }
 
 void DialogueNode::InitPublishers() {
   int initialized_count = 0;
-  tts_publisher_ =
-      create_publisher<std_msgs::msg::String>("/xiaocai_robot/tts/text", 10);
+  tts_publisher_ = create_publisher<xiaocai_msgs::msg::TtsRequest>(
+      "/xiaocai_robot/tts/request", 10);
   ++initialized_count;
   state_publisher_ = create_publisher<xiaocai_msgs::msg::RobotState>(
       "/xiaocai_robot/state", rclcpp::QoS(1).transient_local());
@@ -39,6 +39,10 @@ void DialogueNode::InitPublishers() {
   ++initialized_count;
   music_command_publisher_ = create_publisher<xiaocai_msgs::msg::MusicCommand>(
       "/xiaocai_robot/music/command", 10);
+  ++initialized_count;
+  conversation_publisher_ =
+      create_publisher<xiaocai_msgs::msg::ConversationState>(
+          "/xiaocai_robot/dialogue/state", rclcpp::QoS(1).transient_local());
   ++initialized_count;
   LOG_INFO("Initialized {} publishers", initialized_count);
 }
@@ -93,6 +97,18 @@ void DialogueNode::InitSubscribers() {
         OnAudioPlayCallback(*message);
       });
   ++initialized_count;
+  turn_subscriber_ = create_subscription<xiaocai_msgs::msg::ConversationTurn>(
+      "/xiaocai_robot/dialogue/turn", 10,
+      [this](xiaocai_msgs::msg::ConversationTurn::SharedPtr message) {
+        OnConversationTurnCallback(*message);
+      });
+  ++initialized_count;
+  tts_result_subscriber_ = create_subscription<xiaocai_msgs::msg::TtsResult>(
+      "/xiaocai_robot/tts/result", 100,
+      [this](xiaocai_msgs::msg::TtsResult::SharedPtr message) {
+        OnTtsResultCallback(*message);
+      });
+  ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
@@ -108,7 +124,13 @@ void DialogueNode::InitController() {
   settings.model = declare_parameter<std::string>("model", settings.model);
 
   DialogueCallbacks callbacks;
-  callbacks.speak = [this](const std::string &text) { PublishSpeech(text); };
+  callbacks.speak = [this](const std::string &text, std::uint64_t request_id) {
+    PublishSpeech(text, request_id);
+  };
+  callbacks.publish_conversation = [this](common::ConversationPhase phase,
+                                          bool expect_reply) {
+    PublishConversation(phase, expect_reply);
+  };
   callbacks.publish_state = [this](common::RobotState state) {
     PublishState(state);
   };
@@ -146,10 +168,22 @@ void DialogueNode::PublishState(common::RobotState state) {
   state_publisher_->publish(message);
 }
 
-void DialogueNode::PublishSpeech(const std::string &text) {
-  std_msgs::msg::String message;
-  message.data = text;
+void DialogueNode::PublishSpeech(const std::string &text,
+                                 std::uint64_t request_id) {
+  xiaocai_msgs::msg::TtsRequest message;
+  message.timestamp = now();
+  message.request_id = request_id;
+  message.text = text;
   tts_publisher_->publish(message);
+}
+
+void DialogueNode::PublishConversation(common::ConversationPhase phase,
+                                       bool expect_reply) {
+  xiaocai_msgs::msg::ConversationState message;
+  message.timestamp = now();
+  message.phase = static_cast<std::uint8_t>(phase);
+  message.expect_reply = expect_reply;
+  conversation_publisher_->publish(message);
 }
 
 void DialogueNode::PublishMemoryCommand(const DialogueMemoryCommand &command) {
@@ -255,6 +289,16 @@ void DialogueNode::OnMusicStateCallback(
 void DialogueNode::OnAudioPlayCallback(
     const xiaocai_msgs::msg::AudioPlay &message) {
   dialogue_controller_->HandleAudioPlay(message.path);
+}
+
+void DialogueNode::OnConversationTurnCallback(
+    const xiaocai_msgs::msg::ConversationTurn &message) {
+  dialogue_controller_->HandleConversationTurn(message.expects_speech);
+}
+
+void DialogueNode::OnTtsResultCallback(
+    const xiaocai_msgs::msg::TtsResult &message) {
+  dialogue_controller_->HandleTtsResult(message.request_id, message.success);
 }
 
 } // namespace xiaocai_robot

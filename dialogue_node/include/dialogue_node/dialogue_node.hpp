@@ -4,11 +4,15 @@
 #include "dialogue_node/dialogue_config.hpp"
 #include "dialogue_node/dialogue_controller.hpp"
 #include "xiaocai_msgs/msg/audio_play.hpp"
+#include "xiaocai_msgs/msg/conversation_state.hpp"
+#include "xiaocai_msgs/msg/conversation_turn.hpp"
 #include "xiaocai_msgs/msg/intent.hpp"
 #include "xiaocai_msgs/msg/memory_result.hpp"
 #include "xiaocai_msgs/msg/music_state.hpp"
 #include "xiaocai_msgs/msg/reminder.hpp"
 #include "xiaocai_msgs/msg/robot_state.hpp"
+#include "xiaocai_msgs/msg/tts_request.hpp"
+#include "xiaocai_msgs/msg/tts_result.hpp"
 #include "xiaocai_msgs/srv/get_volume.hpp"
 
 #include <rclcpp/rclcpp.hpp>
@@ -40,7 +44,8 @@ private:
 
   // ROS message publishing.
   void PublishState(common::RobotState state);
-  void PublishSpeech(const std::string &text);
+  void PublishSpeech(const std::string &text, std::uint64_t request_id);
+  void PublishConversation(common::ConversationPhase phase, bool expect_reply);
   void PublishMemoryCommand(const DialogueMemoryCommand &command);
   void PublishVolumeCommand(common::VolumeAction action, int percent);
   void PublishMusicCommand(common::MusicAction action, const std::string &query,
@@ -59,9 +64,19 @@ private:
   void OnMusicStateCallback(const xiaocai_msgs::msg::MusicState &message);
   void OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay &message);
 
+  void OnConversationTurnCallback(
+      const xiaocai_msgs::msg::ConversationTurn &message);
+  void OnTtsResultCallback(const xiaocai_msgs::msg::TtsResult &message);
+
   DialogueConfig dialogue_config_;
   LogManager log_manager_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr tts_publisher_;
+  rclcpp::Publisher<xiaocai_msgs::msg::TtsRequest>::SharedPtr tts_publisher_;
+  rclcpp::Publisher<xiaocai_msgs::msg::ConversationState>::SharedPtr
+      conversation_publisher_;
+  rclcpp::Subscription<xiaocai_msgs::msg::ConversationTurn>::SharedPtr
+      turn_subscriber_;
+  rclcpp::Subscription<xiaocai_msgs::msg::TtsResult>::SharedPtr
+      tts_result_subscriber_;
   rclcpp::Publisher<xiaocai_msgs::msg::RobotState>::SharedPtr state_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MemoryCommand>::SharedPtr
       memory_publisher_;

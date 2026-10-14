@@ -22,6 +22,7 @@ struct SpeechInputSettings {
       "/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"};
   double input_gain{6.0};
   double inactivity_timeout_sec{120.0};
+  double followup_timeout_sec{15.0};
 };
 
 class SpeechInputConfig : public NodeConfigBase {

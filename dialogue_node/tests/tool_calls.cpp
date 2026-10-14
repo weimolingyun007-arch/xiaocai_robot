@@ -5,6 +5,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <xiaocai_msgs/msg/music_command.hpp>
+#include <xiaocai_msgs/msg/tts_request.hpp>
 
 using namespace std::chrono_literals;
 
@@ -92,9 +93,10 @@ int main(int argc, char **argv) {
             music_timer->cancel();
           });
         });
-    auto tts = node->create_subscription<std_msgs::msg::String>(
-        "/xiaocai_robot/tts/text", 10, [&](std_msgs::msg::String::SharedPtr m) {
-          answers.push_back(m->data);
+    auto tts = node->create_subscription<xiaocai_msgs::msg::TtsRequest>(
+        "/xiaocai_robot/tts/request", 10,
+        [&](xiaocai_msgs::msg::TtsRequest::SharedPtr m) {
+          answers.push_back(m->text);
         });
     auto spin_for = [&](std::chrono::milliseconds duration) {
       const auto until = std::chrono::steady_clock::now() + duration;

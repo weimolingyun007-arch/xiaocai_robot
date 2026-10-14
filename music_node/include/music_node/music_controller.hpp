@@ -2,9 +2,11 @@
 
 #include "common/common.hpp"
 #include "common/log_manager.hpp"
+#include "defination/conversation_phase.hpp"
 #include "defination/music_action.hpp"
 #include "defination/music_state.hpp"
 #include "music_node/music_config.hpp"
+#include "music_node/music_lyrics.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -22,7 +24,9 @@ struct MusicPlaybackStatus {
   common::MusicState state{common::MusicState::Stopped};
   std::string error;
   std::uint64_t request_id{0};
+  std::string song_id;
   std::string title;
+  std::string artist;
   double position_seconds{0.0};
   double duration_seconds{0.0};
 };
@@ -31,16 +35,19 @@ class MusicController {
 public:
   using StatusCallback = std::function<void(const MusicPlaybackStatus &)>;
   using SpeechCallback = std::function<void(const std::string &)>;
+  using LoginCallback = std::function<void()>;
 
   MusicController(MusicSettings settings, LogManager &log_manager,
                   StatusCallback status_callback,
-                  SpeechCallback speech_callback);
+                  SpeechCallback speech_callback, LoginCallback login_callback);
   ~MusicController();
 
   void HandleMusicCommand(common::MusicAction action, const std::string &query,
                           std::uint64_t request_id);
   void HandleAudioPlay(const std::string &path);
   void HandleVoicePlaying(bool playing);
+  void HandleSpeechAwake(bool awake);
+  void HandleConversation(common::ConversationPhase phase);
   void HandleStateUpdate();
 
 private:
@@ -54,6 +61,8 @@ private:
     bool ok{false};
     json data;
     std::string output;
+    int exit_code{-1};
+    bool timed_out{false};
   };
 
   // Background worker loop and per-job execution.
@@ -81,8 +90,11 @@ private:
   LogManager &log_manager_;
   StatusCallback status_callback_;
   SpeechCallback speech_callback_;
+  LoginCallback login_callback_;
   std::atomic<bool> stop_, silenced_, voice_playing_, busy_;
-  std::atomic<double> last_voice_at_;
+  std::atomic<double> last_voice_at_, last_conversation_at_;
+  std::atomic<bool> awake_, conversation_active_, resume_after_dialogue_,
+      manually_paused_;
   std::atomic<std::uint64_t> revision_;
   std::mutex jobs_mutex_, state_mutex_, backend_mutex_;
   std::condition_variable ready_;
@@ -90,6 +102,7 @@ private:
   std::thread worker_;
   int backend_fd_;
   MusicPlaybackStatus status_;
+  std::vector<MusicTrack> playlist_;
 };
 
 } // namespace xiaocai_robot

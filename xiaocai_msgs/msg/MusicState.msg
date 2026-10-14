@@ -1,6 +1,8 @@
 builtin_interfaces/Time timestamp
 uint8 state
+string song_id
 string title
+string artist
 float64 position_seconds
 float64 duration_seconds
 string error

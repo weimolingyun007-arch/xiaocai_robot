@@ -51,6 +51,19 @@ AudioIoNode::AudioIoNode()
   playback_ = std::thread([this] { PlaybackLoop(); });
 }
 
+AudioIoNode::~AudioIoNode() {
+  stop_ = true;
+  cv_.notify_all();
+  if (capture_pid_ > 0)
+    kill(capture_pid_, SIGTERM);
+  if (playback_pid_ > 0)
+    kill(playback_pid_, SIGTERM);
+  if (capture_.joinable())
+    capture_.join();
+  if (playback_.joinable())
+    playback_.join();
+}
+
 void AudioIoNode::InitPublishers() {
   int initialized_count = 0;
   mic_publisher_ = create_publisher<std_msgs::msg::UInt8MultiArray>(
@@ -61,6 +74,10 @@ void AudioIoNode::InitPublishers() {
   ++initialized_count;
   volume_state_publisher_ = create_publisher<std_msgs::msg::Int32>(
       "/xiaocai_robot/audio/volume/state", 10);
+  ++initialized_count;
+  playback_result_publisher_ =
+      create_publisher<xiaocai_msgs::msg::AudioPlaybackResult>(
+          "/xiaocai_robot/audio/result", 100);
   ++initialized_count;
   LOG_INFO("Initialized {} publishers", initialized_count);
 }
@@ -83,25 +100,51 @@ void AudioIoNode::InitSubscribers() {
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
+void AudioIoNode::InitServers() {
+  volume_get_server_ = create_service<xiaocai_msgs::srv::GetVolume>(
+      "/xiaocai_robot/audio/get_volume",
+      [this](const std::shared_ptr<xiaocai_msgs::srv::GetVolume::Request>,
+             std::shared_ptr<xiaocai_msgs::srv::GetVolume::Response> response) {
+        response->percent = volume_percent_;
+      });
+}
+
+void AudioIoNode::PublishPlaybackResult(const std::string &path, bool success) {
+  xiaocai_msgs::msg::AudioPlaybackResult message;
+  message.timestamp = now();
+  message.path = path;
+  message.success = success;
+  playback_result_publisher_->publish(message);
+}
+
 void AudioIoNode::OnAudioPlayCallback(
     const xiaocai_msgs::msg::AudioPlay::SharedPtr message) {
   if (message->path.empty()) {
-    common::MpvCommand({"stop"});
     silenced_.store(true);
+    common::MpvCommand({"stop"});
+    std::deque<std::string> cancelled;
     {
       std::lock_guard<std::mutex> lock(mu_);
-      queue_.clear();
+      cancelled.swap(queue_);
     }
-    const pid_t pid = playback_pid_.load();
+    for (const auto &path : cancelled) {
+      if (path.rfind("/tmp/xiaocai_tts/", 0) == 0)
+        unlink(path.c_str());
+      PublishPlaybackResult(path, false);
+    }
+    const auto pid = playback_pid_.load();
     if (pid > 0)
       kill(pid, SIGTERM);
-    cv_.notify_one();
     return;
   }
   if (message->path == wake_ack_path_)
     silenced_.store(false);
-  if (silenced_.load())
+  if (silenced_.load()) {
+    if (message->path.rfind("/tmp/xiaocai_tts/", 0) == 0)
+      unlink(message->path.c_str());
+    PublishPlaybackResult(message->path, false);
     return;
+  }
   {
     std::lock_guard<std::mutex> lock(mu_);
     queue_.push_back(message->path);
@@ -118,15 +161,6 @@ void AudioIoNode::OnVolumeCommandCallback(
     SetVolume(volume_percent_ - 10, true);
   else if (action == common::VolumeAction::Set)
     SetVolume(message->percent, true);
-}
-
-void AudioIoNode::InitServers() {
-  volume_get_server_ = create_service<xiaocai_msgs::srv::GetVolume>(
-      "/xiaocai_robot/audio/get_volume",
-      [this](const std::shared_ptr<xiaocai_msgs::srv::GetVolume::Request>,
-             std::shared_ptr<xiaocai_msgs::srv::GetVolume::Response> response) {
-        response->percent = volume_percent_;
-      });
 }
 
 void AudioIoNode::SetVolume(int percent, bool notify) {
@@ -159,19 +193,6 @@ void AudioIoNode::SetVolume(int percent, bool notify) {
     state.data = percent;
     volume_state_publisher_->publish(state);
   }
-}
-
-AudioIoNode::~AudioIoNode() {
-  stop_ = true;
-  cv_.notify_all();
-  if (capture_pid_ > 0)
-    kill(capture_pid_, SIGTERM);
-  if (playback_pid_ > 0)
-    kill(playback_pid_, SIGTERM);
-  if (capture_.joinable())
-    capture_.join();
-  if (playback_.joinable())
-    playback_.join();
 }
 
 void AudioIoNode::MakeBeep() {
@@ -299,12 +320,17 @@ void AudioIoNode::PlaybackLoop() {
       path = queue_.front();
       queue_.pop_front();
     }
-    if (silenced_.load())
+    if (silenced_.load()) {
+      if (path.rfind("/tmp/xiaocai_tts/", 0) == 0)
+        unlink(path.c_str());
+      PublishPlaybackResult(path, false);
       continue;
+    }
     if (path == "__beep__")
       path = beep_;
     if (access(path.c_str(), R_OK) != 0) {
       LOG_ERROR("Missing audio file: {}", path);
+      PublishPlaybackResult(path, false);
       continue;
     }
     std_msgs::msg::Bool state;
@@ -313,7 +339,7 @@ void AudioIoNode::PlaybackLoop() {
     // Pause music synchronously before the wake response or spoken reply.
     common::MpvCommand({"set_property", "pause", true});
     std::this_thread::sleep_for(std::chrono::milliseconds(80));
-    int status = 0;
+    int status = -1;
     if (!silenced_.load()) {
       std::vector<std::string> arguments = {"aplay", "-q", "-D",
                                             playback_device_, path};
@@ -346,6 +372,7 @@ void AudioIoNode::PlaybackLoop() {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     state.data = false;
     playing_publisher_->publish(state);
+    PublishPlaybackResult(path, status == 0 && !silenced_.load());
   }
 }
 

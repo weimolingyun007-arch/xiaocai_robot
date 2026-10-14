@@ -14,6 +14,9 @@ add_executable(music_node
   src/main.cpp
   src/music_config.cpp
   src/music_controller.cpp
+  src/music_lyrics.cpp
+  src/music_lyrics_loader.cpp
+  src/music_login_manager.cpp
   src/music_node.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
@@ -21,4 +24,5 @@ ament_target_dependencies(music_node ament_index_cpp rclcpp std_msgs xiaocai_msg
 target_link_libraries(music_node Threads::Threads)
 install(TARGETS music_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY assets DESTINATION share/${PROJECT_NAME})
 ament_package()

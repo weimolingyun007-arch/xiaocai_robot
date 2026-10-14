@@ -118,6 +118,7 @@ done
 for required in \
   resource/speech/wake_ack.wav \
   resource/audio/asound.conf \
+  resource/music/ncm_player_compat.cjs \
   resource/display/idle.ppm \
   resource/display/listening.ppm \
   resource/display/thinking.ppm \

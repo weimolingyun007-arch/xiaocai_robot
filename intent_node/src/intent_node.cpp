@@ -79,6 +79,9 @@ void IntentNode::InitPublishers() {
       create_publisher<xiaocai_msgs::msg::MemoryCommand>(
           "/xiaocai_robot/memory/command", 10);
   ++initialized_count;
+  turn_publisher_ = create_publisher<xiaocai_msgs::msg::ConversationTurn>(
+      "/xiaocai_robot/dialogue/turn", 10);
+  ++initialized_count;
   LOG_INFO("Initialized {} publishers", initialized_count);
 }
 
@@ -97,6 +100,11 @@ void IntentNode::OnTextCallback(std_msgs::msg::String::SharedPtr message) {
   const IntentResult result = intent_rules_.Classify(message->data);
   if (result.normalized_text.empty())
     return;
+
+  xiaocai_msgs::msg::ConversationTurn turn;
+  turn.timestamp = now();
+  turn.expects_speech = !std::holds_alternative<MusicIntent>(result.payload);
+  turn_publisher_->publish(turn);
 
   std::visit(
       [this, &result](const auto &intent) {

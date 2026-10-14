@@ -7,6 +7,11 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AudioPlay.msg"
+  "msg/AudioPlaybackResult.msg"
+  "msg/ConversationState.msg"
+  "msg/ConversationTurn.msg"
+  "msg/TtsRequest.msg"
+  "msg/TtsResult.msg"
   "msg/Intent.msg"
   "msg/MusicCommand.msg"
   "msg/MemoryCommand.msg"
@@ -15,6 +20,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RobotState.msg"
   "msg/VolumeCommand.msg"
   "msg/MusicState.msg"
+  "msg/MusicLyrics.msg"
+  "msg/MusicLogin.msg"
   "srv/GetVolume.srv"
   DEPENDENCIES builtin_interfaces
 )

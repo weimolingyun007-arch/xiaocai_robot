@@ -102,11 +102,13 @@ SpeechInputController::SpeechInputController(SpeechInputSettings settings,
       wake_recognizer_(nullptr), asr_(nullptr), vad_(nullptr), vad_pending_(),
       recent_samples_(), samples_seen_(0), history_begin_(0), segments_(),
       results_(), queue_mutex_(), queue_ready_(), decoder_(), stop_(false),
-      playing_(false), music_playing_(false), wake_candidate_(false),
-      request_in_flight_(false), recognition_generation_(0),
+      playing_(false), music_playing_(false), conversation_active_(false),
+      wake_candidate_(false), request_in_flight_(false),
+      recognition_generation_(0),
       input_gain_(static_cast<float>(settings_.input_gain)),
       inactivity_timeout_sec_(settings_.inactivity_timeout_sec),
-      ignore_until_(0.0), armed_until_(0.0), last_wake_time_(0.0) {
+      ignore_until_(0.0), armed_until_(0.0), last_wake_time_(0.0),
+      listening_deadline_(0.0) {
   if (!callbacks_.publish_text || !callbacks_.publish_audio_play ||
       !callbacks_.publish_awake)
     throw std::invalid_argument("SpeechInputController callbacks are required");
@@ -191,7 +193,7 @@ void SpeechInputController::HandleAudioData(
       if (IsHushCommand(phrase)) {
         LOG_INFO("hush command detected during playback: {}", phrase);
         ReturnToWakeOnly();
-      } else if (music_playing_ && !playing_ && ExactWakePhrase(phrase) &&
+      } else if (!playing_ && ExactWakePhrase(phrase) &&
                  Monotonic() - last_wake_time_ > 2.0) {
         AcknowledgeWake();
       }
@@ -233,7 +235,8 @@ void SpeechInputController::HandleAudioData(
   if (armed_until_ > 0) {
     const double now = Monotonic();
     if (SherpaOnnxVoiceActivityDetectorDetected(vad_)) {
-      armed_until_ = now + inactivity_timeout_sec_;
+      armed_until_ = listening_deadline_ > 0 ? listening_deadline_
+                                             : now + inactivity_timeout_sec_;
     } else if (now >= armed_until_) {
       EnterStandby();
       LOG_INFO("No request for {:.0f} seconds; wake-only standby",
@@ -247,7 +250,8 @@ void SpeechInputController::HandleAudioData(
     const auto phrase = !result.is_object()
                             ? std::string{}
                             : CompactText(result.value("text", std::string{}));
-    if (IsHushCommand(phrase) && armed_until_ > Monotonic()) {
+    if (IsHushCommand(phrase) &&
+        (armed_until_ > Monotonic() || conversation_active_)) {
       LOG_INFO("hush command detected: {}", phrase);
       ReturnToWakeOnly();
       return;
@@ -295,7 +299,37 @@ void SpeechInputController::HandleMusicState(common::MusicState state) {
   results_.clear();
 }
 
+void SpeechInputController::HandleConversation(common::ConversationPhase phase,
+                                               bool expect_reply) {
+  conversation_active_ = phase != common::ConversationPhase::Idle;
+  if (phase == common::ConversationPhase::Listening && expect_reply) {
+    armed_until_ = 0;
+    ++recognition_generation_;
+    request_in_flight_ = false;
+    ResetCapture();
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      segments_.clear();
+      results_.clear();
+    }
+    listening_deadline_ = Monotonic() + settings_.followup_timeout_sec;
+    armed_until_ = listening_deadline_;
+    ignore_until_ = Monotonic() + 0.4;
+    callbacks_.publish_awake(true);
+    LOG_INFO("Listening for a follow-up answer for at most {:.0f} seconds",
+             settings_.followup_timeout_sec);
+  } else if (phase == common::ConversationPhase::Idle && armed_until_ > 0) {
+    EnterStandby();
+  }
+}
+
 void SpeechInputController::DrainResults() {
+  // A hard deadline is independent of VAD activity and still expires if the
+  // microphone stops producing data. Old ASR work cannot reopen this turn.
+  if (listening_deadline_ > 0 && Monotonic() >= listening_deadline_) {
+    EnterStandby();
+    LOG_INFO("Listening window timed out; waiting for the next wake word");
+  }
   std::deque<SpeechRecognitionResult> results;
   {
     std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -307,10 +341,12 @@ void SpeechInputController::DrainResults() {
 }
 
 std::uint64_t SpeechInputController::AcknowledgeWake() {
-  // A wake word explicitly ends the current music session.
-  common::MpvCommand({"stop"});
+  // Preserve the playlist and position for resumption after the dialogue.
+  common::MpvCommand({"set_property", "pause", true});
+  listening_deadline_ = Monotonic() + inactivity_timeout_sec_;
   music_playing_ = false;
-  armed_until_ = Monotonic() + inactivity_timeout_sec_;
+  conversation_active_ = true;
+  armed_until_ = listening_deadline_;
   last_wake_time_ = Monotonic();
   ++recognition_generation_;
   request_in_flight_ = false;
@@ -463,6 +499,7 @@ void SpeechInputController::ResetCapture() {
 
 void SpeechInputController::EnterStandby() {
   armed_until_ = 0;
+  listening_deadline_ = 0;
   ++recognition_generation_;
   request_in_flight_ = false;
   ResetCapture();
@@ -475,14 +512,15 @@ void SpeechInputController::EnterStandby() {
 }
 
 void SpeechInputController::AcceptRequest(const std::string &text) {
-  // Close this wake session before publishing the request. Pending or in-flight
-  // ASR results carry the old generation and cannot become a second request.
+  // Suspend capture while this turn is processed. Dialogue policy re-arms it
+  // after a question has finished playing; old ASR generations are discarded.
   EnterStandby();
   callbacks_.publish_text(text);
-  LOG_INFO("Single request accepted; waiting for the next wake word");
+  LOG_INFO("Request accepted; waiting for the dialogue response");
 }
 
 void SpeechInputController::ReturnToWakeOnly() {
+  conversation_active_ = false;
   common::MpvCommand({"stop"});
   last_wake_time_ = Monotonic();
   EnterStandby();

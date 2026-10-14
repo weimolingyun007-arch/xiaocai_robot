@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/log_manager.hpp"
+#include "defination/conversation_phase.hpp"
 #include "defination/music_state.hpp"
 #include "speech_input_node/speech_input_config.hpp"
 
@@ -41,6 +42,7 @@ public:
   void HandleAudioData(const std::vector<std::uint8_t> &audio_data);
   void HandleAudioPlaying(bool playing);
   void HandleMusicState(common::MusicState state);
+  void HandleConversation(common::ConversationPhase phase, bool expect_reply);
   void DrainResults();
 
   std::uint64_t AcknowledgeWake();
@@ -80,6 +82,7 @@ private:
   bool stop_;
   bool playing_;
   bool music_playing_;
+  bool conversation_active_;
   bool wake_candidate_;
   bool request_in_flight_;
   std::uint64_t recognition_generation_;
@@ -88,6 +91,7 @@ private:
   double ignore_until_;
   double armed_until_;
   double last_wake_time_;
+  double listening_deadline_;
 };
 
 } // namespace xiaocai_robot

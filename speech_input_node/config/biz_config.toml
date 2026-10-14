@@ -15,3 +15,5 @@ vad_model_path = "/home/lckfb/xiaocai_robot/resource/speech/silero_vad.onnx"
 wake_ack_path = "/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"
 input_gain = 6.0
 inactivity_timeout_sec = 120.0
+# Hard limit after the robot finishes a follow-up question (1-120 seconds).
+followup_timeout_sec = 15.0

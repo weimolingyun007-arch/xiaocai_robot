@@ -3,6 +3,7 @@
 #include "common/log_manager.hpp"
 #include "intent_node/intent_config.hpp"
 #include "intent_node/intent_rules.hpp"
+#include "xiaocai_msgs/msg/conversation_turn.hpp"
 #include "xiaocai_msgs/msg/intent.hpp"
 #include "xiaocai_msgs/msg/memory_command.hpp"
 #include "xiaocai_msgs/msg/music_command.hpp"
@@ -35,6 +36,8 @@ private:
       volume_command_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MemoryCommand>::SharedPtr
       memory_command_publisher_;
+  rclcpp::Publisher<xiaocai_msgs::msg::ConversationTurn>::SharedPtr
+      turn_publisher_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr text_subscriber_;
 };
 

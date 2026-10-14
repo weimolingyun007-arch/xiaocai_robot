@@ -11,5 +11,8 @@
   <depend>rclcpp</depend>
   <depend>xiaocai_msgs</depend>
   <build_depend>libx11-dev</build_depend>
+  <build_depend>libxft-dev</build_depend>
   <exec_depend>libx11-6</exec_depend>
+  <exec_depend>libxft2</exec_depend>
+  <exec_depend>fonts-noto-cjk</exec_depend>
 </package>
