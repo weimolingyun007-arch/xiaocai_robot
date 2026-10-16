@@ -1,7 +1,9 @@
 #include "display_node/wifi_status_reader.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -11,6 +13,16 @@
 #include <utility>
 
 namespace xiaocai_robot {
+namespace {
+
+bool ReadByteCounter(const std::string &interface_name, const char *direction,
+                     std::uint64_t &bytes) {
+  std::ifstream counter("/sys/class/net/" + interface_name + "/statistics/" +
+                        direction + "_bytes");
+  return static_cast<bool>(counter >> bytes);
+}
+
+} // namespace
 
 WifiStatusReader::WifiStatusReader(std::string interface_name)
     : interface_name_(std::move(interface_name)) {
@@ -21,11 +33,14 @@ WifiStatusReader::WifiStatusReader(std::string interface_name)
     throw std::invalid_argument("Invalid Wi-Fi interface name");
 }
 
-WifiStatus WifiStatusReader::Read() const {
+WifiStatus WifiStatusReader::Read() {
   WifiStatus status;
   status.available = if_nametoindex(interface_name_.c_str()) != 0;
-  if (!status.available)
+  if (!status.available) {
+    previous_sample_valid_ = false;
+    previous_connected_ = false;
     return status;
+  }
 
   int carrier = 0;
   std::ifstream("/sys/class/net/" + interface_name_ + "/carrier") >> carrier;
@@ -81,6 +96,35 @@ WifiStatus WifiStatusReader::Read() const {
       }
     }
     break;
+  }
+
+  std::uint64_t rx_bytes = 0;
+  std::uint64_t tx_bytes = 0;
+  const bool counters_available =
+      ReadByteCounter(interface_name_, "rx", rx_bytes) &&
+      ReadByteCounter(interface_name_, "tx", tx_bytes);
+  const auto sample_time = std::chrono::steady_clock::now();
+  if (counters_available && status.connected && previous_sample_valid_ &&
+      previous_connected_ && rx_bytes >= previous_rx_bytes_ &&
+      tx_bytes >= previous_tx_bytes_) {
+    const double elapsed =
+        std::chrono::duration<double>(sample_time - previous_sample_time_)
+            .count();
+    if (elapsed > 0.0 && std::isfinite(elapsed)) {
+      status.speed_known = true;
+      status.download_bytes_per_second =
+          static_cast<double>(rx_bytes - previous_rx_bytes_) / elapsed;
+      status.upload_bytes_per_second =
+          static_cast<double>(tx_bytes - previous_tx_bytes_) / elapsed;
+    }
+  }
+
+  previous_sample_valid_ = counters_available;
+  previous_connected_ = status.connected;
+  if (counters_available) {
+    previous_rx_bytes_ = rx_bytes;
+    previous_tx_bytes_ = tx_bytes;
+    previous_sample_time_ = sample_time;
   }
   return status;
 }

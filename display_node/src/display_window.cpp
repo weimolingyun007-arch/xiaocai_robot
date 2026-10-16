@@ -8,10 +8,12 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <limits>
 #include <new>
@@ -23,6 +25,52 @@
 
 namespace xiaocai_robot {
 namespace {
+
+constexpr int kMusicWidth = 736;
+constexpr int kMusicCenter = 400;
+constexpr int kButtonY = 410;
+constexpr int kButtonWidth = 184;
+constexpr int kButtonHeight = 54;
+constexpr std::array<int, 3> kButtonX{80, 308, 536};
+constexpr int kButtonIconOffset = 45;
+constexpr int kButtonLabelOffset = 122;
+constexpr int kVolumePanelLeft = 736;
+constexpr int kVolumeX = 760;
+constexpr int kVolumeTop = 194;
+constexpr int kVolumeBottom = 344;
+constexpr int kVolumeGestureTop = 120;
+constexpr int kVolumeGestureBottom = 405;
+constexpr double kVolumeVisibleSeconds = 1.4;
+
+double SteadySeconds() {
+  return std::chrono::duration<double>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+std::string LocalClockText() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local_time{};
+  if (localtime_r(&now, &local_time) == nullptr)
+    return "--:--";
+  char text[32]{};
+  if (std::strftime(text, sizeof(text), "%Y-%m-%d  %H:%M", &local_time) == 0)
+    return "--:--";
+  return text;
+}
+
+std::string FormatRate(double bytes_per_second) {
+  char text[32]{};
+  if (bytes_per_second < 1024.0) {
+    std::snprintf(text, sizeof(text), "%.0fB/s", bytes_per_second);
+  } else if (bytes_per_second < 1024.0 * 1024.0) {
+    std::snprintf(text, sizeof(text), "%.1fK/s", bytes_per_second / 1024.0);
+  } else {
+    std::snprintf(text, sizeof(text), "%.1fM/s",
+                  bytes_per_second / (1024.0 * 1024.0));
+  }
+  return text;
+}
 
 struct RgbImage {
   unsigned int width{};
@@ -117,14 +165,21 @@ struct DisplayWindow::State {
   State()
       : display(nullptr), window(0), graphics_context(nullptr), buffer(0),
         text_draw(nullptr), fonts{}, colors{}, color_count(0),
-        music_mode(false), login_required(false), login_loading(false) {}
+        music_mode(false), login_required(false), login_loading(false),
+        clock_text(LocalClockText()) {}
   ~State();
 
   int TextWidth(const std::string &text, std::size_t font) const;
   std::string FitText(std::string text, std::size_t font, int width) const;
   void DrawText(const std::string &text, std::size_t font, std::size_t color,
                 int x, int baseline, bool centered = false);
-  void DrawWifiStatus();
+  void DrawStatusBar();
+  void DrawMusicControls();
+  void DrawVolumeOverlay();
+  int MusicButtonAt(int x, int y) const;
+  void DragVolume(int y, bool final);
+  void UpdateVolumeVisibility();
+  bool UpdateClock();
   void DrawLogin();
   void Present();
 
@@ -146,6 +201,19 @@ struct DisplayWindow::State {
   std::string login_url;
   std::string login_error;
   std::optional<qrcodegen::QrCode> login_qr;
+  std::string clock_text;
+  std::function<void(common::MusicAction)> music_control_callback;
+  std::function<void(int)> volume_control_callback;
+  int pressed_button{-1};
+  bool music_paused{false};
+  int volume_percent{80};
+  int last_sent_volume{-1};
+  bool volume_known{false};
+  bool dragging_volume{false};
+  bool volume_visible{false};
+  double volume_visible_until{0.0};
+  double last_button_at{-1.0};
+  double last_volume_at{-1.0};
 };
 
 DisplayWindow::State::~State() {
@@ -208,8 +276,21 @@ void DisplayWindow::State::DrawText(const std::string &text, std::size_t font,
                     static_cast<int>(text.size()));
 }
 
-void DisplayWindow::State::DrawWifiStatus() {
+void DisplayWindow::State::DrawStatusBar() {
   const int screen = DefaultScreen(display);
+  XSetForeground(display, graphics_context, BlackPixel(display, screen));
+  XFillRectangle(display, buffer, graphics_context, 0, 0, 800, 40);
+  DrawText(clock_text, 0, 0, 20, 27);
+
+  const std::string speed_text =
+      wifi_status.speed_known
+          ? "\xE2\x86\x93" + FormatRate(wifi_status.download_bytes_per_second) +
+                " \xE2\x86\x91" +
+                FormatRate(wifi_status.upload_bytes_per_second)
+          : "\xE2\x86\x93-- \xE2\x86\x91--";
+  const int speed_x = 724 - TextWidth(speed_text, 0);
+  DrawText(speed_text, 0, 2, speed_x, 27);
+
   XSetForeground(display, graphics_context, BlackPixel(display, screen));
   XFillRectangle(display, buffer, graphics_context, 734, 7, 44, 33);
   XSetLineAttributes(display, graphics_context, 2, LineSolid, CapRound,
@@ -231,6 +312,124 @@ void DisplayWindow::State::DrawWifiStatus() {
   }
   XSetLineAttributes(display, graphics_context, 1, LineSolid, CapButt,
                      JoinMiter);
+}
+
+int DisplayWindow::State::MusicButtonAt(int x, int y) const {
+  if (!music_mode || login_required || y < kButtonY ||
+      y >= kButtonY + kButtonHeight)
+    return -1;
+  for (std::size_t i = 0; i < kButtonX.size(); ++i)
+    if (x >= kButtonX[i] && x < kButtonX[i] + kButtonWidth)
+      return static_cast<int>(i);
+  return -1;
+}
+
+void DisplayWindow::State::DrawMusicControls() {
+  for (std::size_t i = 0; i < kButtonX.size(); ++i) {
+    const int x = kButtonX[i];
+    const bool pressed = pressed_button == static_cast<int>(i);
+    XSetForeground(display, graphics_context, colors[pressed ? 3 : 4].pixel);
+    XFillRectangle(display, buffer, graphics_context, x, kButtonY, kButtonWidth,
+                   kButtonHeight);
+    XSetForeground(display, graphics_context, colors[3].pixel);
+    XDrawRectangle(display, buffer, graphics_context, x, kButtonY,
+                   kButtonWidth - 1, kButtonHeight - 1);
+    const auto foreground = colors[pressed ? 4 : 0].pixel;
+    XSetForeground(display, graphics_context, foreground);
+    const int center_y = kButtonY + kButtonHeight / 2;
+    const int center_x = x + kButtonIconOffset;
+    if (i == 1 && !music_paused) {
+      XFillRectangle(display, buffer, graphics_context, center_x - 8,
+                     center_y - 10, 5, 20);
+      XFillRectangle(display, buffer, graphics_context, center_x + 3,
+                     center_y - 10, 5, 20);
+    } else {
+      const int direction = i == 0 ? -1 : 1;
+      XPoint triangle[]{{static_cast<short>(center_x + direction * 8),
+                         static_cast<short>(center_y)},
+                        {static_cast<short>(center_x - direction * 7),
+                         static_cast<short>(center_y - 10)},
+                        {static_cast<short>(center_x - direction * 7),
+                         static_cast<short>(center_y + 10)}};
+      XFillPolygon(display, buffer, graphics_context, triangle, 3, Convex,
+                   CoordModeOrigin);
+      if (i != 1)
+        XFillRectangle(display, buffer, graphics_context,
+                       center_x + direction * 12 - 1, center_y - 10, 3, 20);
+    }
+    const auto *label = i == 0         ? "上一首"
+                        : i == 2       ? "下一首"
+                        : music_paused ? "播放"
+                                       : "暂停";
+    DrawText(label, 1, pressed ? 4 : 0, x + kButtonLabelOffset, kButtonY + 35,
+             true);
+  }
+  if (volume_visible)
+    DrawVolumeOverlay();
+}
+
+void DisplayWindow::State::DrawVolumeOverlay() {
+  constexpr int panel_left = 724;
+  constexpr int panel_top = 128;
+  constexpr unsigned int panel_width = 72;
+  constexpr unsigned int panel_height = 296;
+  XSetForeground(display, graphics_context, colors[4].pixel);
+  XFillRectangle(display, buffer, graphics_context, panel_left, panel_top,
+                 panel_width, panel_height);
+  XSetForeground(display, graphics_context, colors[2].pixel);
+  XDrawRectangle(display, buffer, graphics_context, panel_left, panel_top,
+                 panel_width - 1, panel_height - 1);
+  DrawText("音量", 0, 0, kVolumeX, 154, true);
+  DrawText("150", 0, 2, kVolumeX, 181, true);
+  XSetForeground(display, graphics_context, colors[2].pixel);
+  XFillRectangle(display, buffer, graphics_context, kVolumeX - 3, kVolumeTop, 6,
+                 kVolumeBottom - kVolumeTop);
+  XSetForeground(display, graphics_context, colors[3].pixel);
+  const int thumb = kVolumeBottom -
+                    static_cast<int>(std::lround((kVolumeBottom - kVolumeTop) *
+                                                 volume_percent / 150.0));
+  XFillRectangle(display, buffer, graphics_context, kVolumeX - 3, thumb, 6,
+                 kVolumeBottom - thumb);
+  XFillArc(display, buffer, graphics_context, kVolumeX - 9, thumb - 9, 18, 18,
+           0, 360 * 64);
+  DrawText("0", 0, 2, kVolumeX, 372, true);
+  DrawText(volume_known ? std::to_string(volume_percent) + "%" : "--%", 0, 3,
+           kVolumeX, 402, true);
+}
+
+void DisplayWindow::State::DragVolume(int y, bool final) {
+  volume_visible = true;
+  volume_visible_until = SteadySeconds() + kVolumeVisibleSeconds;
+  volume_percent = static_cast<int>(
+      std::lround((kVolumeBottom - std::clamp(y, kVolumeTop, kVolumeBottom)) *
+                  150.0 / (kVolumeBottom - kVolumeTop)));
+  volume_known = true;
+  const auto now = SteadySeconds();
+  if (volume_control_callback && volume_percent != last_sent_volume &&
+      (final || now - last_volume_at >= 0.08)) {
+    last_volume_at = now;
+    last_sent_volume = volume_percent;
+    volume_control_callback(volume_percent);
+  }
+  DrawMusicControls();
+  Present();
+}
+
+void DisplayWindow::State::UpdateVolumeVisibility() {
+  if (!volume_visible || dragging_volume ||
+      SteadySeconds() < volume_visible_until)
+    return;
+  volume_visible = false;
+  DrawMusicControls();
+  Present();
+}
+
+bool DisplayWindow::State::UpdateClock() {
+  const auto updated = LocalClockText();
+  if (updated == clock_text)
+    return false;
+  clock_text = updated;
+  return true;
 }
 
 void DisplayWindow::State::DrawLogin() {
@@ -267,7 +466,7 @@ void DisplayWindow::State::DrawLogin() {
 
 void DisplayWindow::State::Present() {
   DrawLogin();
-  DrawWifiStatus();
+  DrawStatusBar();
   XCopyArea(display, buffer, window, graphics_context, 0, 0, 800, 480, 0, 0);
   XFlush(display);
 }
@@ -297,7 +496,8 @@ DisplayWindow::DisplayWindow(std::filesystem::path asset_directory,
   XChangeWindowAttributes(state_->display, state_->window, CWOverrideRedirect,
                           &attributes);
   XSelectInput(state_->display, state_->window,
-               ExposureMask | StructureNotifyMask);
+               ExposureMask | StructureNotifyMask | ButtonPressMask |
+                   ButtonReleaseMask | PointerMotionMask);
   XStoreName(state_->display, state_->window, "Xiaocai Display");
   state_->graphics_context =
       XCreateGC(state_->display, state_->window, 0, nullptr);
@@ -347,6 +547,11 @@ void DisplayWindow::ShowImage(const std::string &image_name) {
   if (found == state_->images.end())
     throw std::runtime_error("Unknown display expression: " + image_name);
   state_->active_image = image_name;
+  if (state_->dragging_volume)
+    XUngrabPointer(state_->display, CurrentTime);
+  state_->dragging_volume = false;
+  state_->volume_visible = false;
+  state_->pressed_button = -1;
   state_->music_mode = false;
   state_->music_signature.clear();
   XPutImage(state_->display, state_->buffer, state_->graphics_context,
@@ -357,9 +562,9 @@ void DisplayWindow::ShowImage(const std::string &image_name) {
 void DisplayWindow::ShowMusic(const MusicView &view) {
   const int progress =
       view.duration_seconds > 0
-          ? static_cast<int>(
-                736 * std::clamp(view.position_seconds / view.duration_seconds,
-                                 0.0, 1.0))
+          ? static_cast<int>(kMusicWidth * std::clamp(view.position_seconds /
+                                                          view.duration_seconds,
+                                                      0.0, 1.0))
           : 0;
   auto format_time = [](double value) {
     const int seconds = static_cast<int>(std::clamp(value, 0.0, 359999.0));
@@ -376,16 +581,17 @@ void DisplayWindow::ShowMusic(const MusicView &view) {
   if (state_->music_mode && state_->music_signature == signature)
     return;
   state_->music_mode = true;
+  state_->music_paused = view.paused;
   state_->music_signature = signature;
   XSetForeground(state_->display, state_->graphics_context,
                  BlackPixel(state_->display, DefaultScreen(state_->display)));
   XFillRectangle(state_->display, state_->buffer, state_->graphics_context, 0,
                  0, 800, 480);
-  state_->DrawText(state_->FitText(view.title, 2, 736), 2, 0, 32, 58);
-  state_->DrawText(state_->FitText(view.artist, 0, 736), 0, 2, 32, 84);
-  const bool wrap = state_->TextWidth(view.current_line, 3) > 736;
-  state_->DrawText(state_->FitText(view.previous_line, 1, 736), 1, 1, 400,
-                   wrap ? 166 : 190, true);
+  state_->DrawText(state_->FitText(view.title, 2, kMusicWidth), 2, 0, 32, 72);
+  state_->DrawText(state_->FitText(view.artist, 0, kMusicWidth), 0, 2, 32, 98);
+  const bool wrap = state_->TextWidth(view.current_line, 3) > kMusicWidth;
+  state_->DrawText(state_->FitText(view.previous_line, 1, kMusicWidth), 1, 1,
+                   kMusicCenter, wrap ? 154 : 164, true);
   if (wrap) {
     std::size_t split = 0;
     while (split < view.current_line.size()) {
@@ -394,32 +600,41 @@ void DisplayWindow::ShowMusic(const MusicView &view) {
              (static_cast<unsigned char>(view.current_line[next]) & 0xc0) ==
                  0x80)
         ++next;
-      if (state_->TextWidth(view.current_line.substr(0, next), 3) > 736)
+      if (state_->TextWidth(view.current_line.substr(0, next), 3) > kMusicWidth)
         break;
       split = next;
     }
-    state_->DrawText(view.current_line.substr(0, split), 3, 3, 400, 245, true);
-    state_->DrawText(state_->FitText(view.current_line.substr(split), 3, 736),
-                     3, 3, 400, 290, true);
+    state_->DrawText(view.current_line.substr(0, split), 3, 3, kMusicCenter,
+                     225, true);
+    state_->DrawText(
+        state_->FitText(view.current_line.substr(split), 3, kMusicWidth), 3, 3,
+        kMusicCenter, 270, true);
   } else {
     const bool placeholder =
         view.current_line == "暂无歌词" || view.current_line == "歌词加载中…";
-    state_->DrawText(view.current_line, 3, placeholder ? 2 : 3, 400, 263, true);
+    state_->DrawText(view.current_line, 3, placeholder ? 2 : 3, kMusicCenter,
+                     240, true);
   }
-  state_->DrawText(state_->FitText(view.next_line, 1, 736), 1, 1, 400,
-                   wrap ? 346 : 327, true);
+  state_->DrawText(state_->FitText(view.next_line, 1, kMusicWidth), 1, 1,
+                   kMusicCenter, wrap ? 318 : 312, true);
   XSetForeground(state_->display, state_->graphics_context,
                  state_->colors[4].pixel);
   XFillRectangle(state_->display, state_->buffer, state_->graphics_context, 32,
-                 418, 736, 2);
+                 366, kMusicWidth, 2);
   XSetForeground(state_->display, state_->graphics_context,
                  state_->colors[3].pixel);
   XFillRectangle(state_->display, state_->buffer, state_->graphics_context, 32,
-                 418, progress, 2);
-  state_->DrawText(elapsed, 0, 2, 32, 446);
-  state_->DrawText(view.paused ? "已暂停" : "播放中", 0, 3, 400, 446, true);
-  state_->DrawText(duration, 0, 2, 768 - state_->TextWidth(duration, 0), 446);
+                 366, progress, 2);
+  state_->DrawText(elapsed, 0, 2, 32, 392);
+  state_->DrawText(view.paused ? "已暂停" : "播放中", 0, 3, kMusicCenter, 392,
+                   true);
+  state_->DrawText(duration, 0, 2, 768 - state_->TextWidth(duration, 0), 392);
+  state_->DrawMusicControls();
   state_->Present();
+}
+
+bool DisplayWindow::IsVolumeOverlayActive() const {
+  return state_->music_mode && state_->volume_visible;
 }
 
 void DisplayWindow::ShowWifiStatus(const WifiStatus &status) {
@@ -427,10 +642,40 @@ void DisplayWindow::ShowWifiStatus(const WifiStatus &status) {
   if (old.available == status.available && old.link_up == status.link_up &&
       old.connected == status.connected &&
       old.signal_known == status.signal_known &&
-      old.strength == status.strength)
+      old.strength == status.strength &&
+      old.speed_known == status.speed_known &&
+      old.download_bytes_per_second == status.download_bytes_per_second &&
+      old.upload_bytes_per_second == status.upload_bytes_per_second)
     return;
   state_->wifi_status = status;
   state_->Present();
+}
+
+void DisplayWindow::RefreshClock() {
+  if (state_->UpdateClock())
+    state_->Present();
+}
+
+void DisplayWindow::SetMusicControlCallback(
+    std::function<void(common::MusicAction)> callback) {
+  state_->music_control_callback = std::move(callback);
+}
+
+void DisplayWindow::SetVolumeControlCallback(
+    std::function<void(int)> callback) {
+  state_->volume_control_callback = std::move(callback);
+}
+
+void DisplayWindow::ShowVolume(int percent) {
+  if (percent < 0 || percent > 150 || state_->dragging_volume ||
+      (state_->volume_known && state_->volume_percent == percent))
+    return;
+  state_->volume_known = true;
+  state_->volume_percent = percent;
+  if (state_->music_mode && !state_->login_required) {
+    state_->DrawMusicControls();
+    state_->Present();
+  }
 }
 
 void DisplayWindow::ShowLogin(bool required, bool loading,
@@ -440,6 +685,13 @@ void DisplayWindow::ShowLogin(bool required, bool loading,
       state_->login_url == url && state_->login_error == error)
     return;
   state_->login_required = required;
+  if (required) {
+    if (state_->dragging_volume)
+      XUngrabPointer(state_->display, CurrentTime);
+    state_->dragging_volume = false;
+    state_->volume_visible = false;
+    state_->pressed_button = -1;
+  }
   state_->login_loading = loading;
   state_->login_error = error;
   if (state_->login_url != url) {
@@ -463,7 +715,52 @@ void DisplayWindow::ProcessEvents() {
     XNextEvent(state_->display, &event);
     if (event.type == Expose && event.xexpose.count == 0)
       state_->Present();
+    if (!state_->music_mode || state_->login_required)
+      continue;
+    if (event.type == ButtonPress && event.xbutton.button == Button1) {
+      const int x = event.xbutton.x;
+      const int y = event.xbutton.y;
+      if (x >= kVolumePanelLeft && y >= kVolumeGestureTop &&
+          y <= kVolumeGestureBottom) {
+        state_->dragging_volume = true;
+        XGrabPointer(state_->display, state_->window, False,
+                     PointerMotionMask | ButtonReleaseMask, GrabModeAsync,
+                     GrabModeAsync, None, None, CurrentTime);
+        state_->DragVolume(y, false);
+      } else {
+        state_->pressed_button = state_->MusicButtonAt(x, y);
+        state_->DrawMusicControls();
+        state_->Present();
+      }
+    } else if (event.type == MotionNotify && state_->dragging_volume) {
+      state_->DragVolume(event.xmotion.y, false);
+    } else if (event.type == ButtonRelease && event.xbutton.button == Button1) {
+      if (state_->dragging_volume) {
+        state_->DragVolume(event.xbutton.y, true);
+        state_->dragging_volume = false;
+        XUngrabPointer(state_->display, CurrentTime);
+      } else {
+        const auto button = state_->pressed_button;
+        state_->pressed_button = -1;
+        state_->DrawMusicControls();
+        state_->Present();
+        const auto now = SteadySeconds();
+        if (button >= 0 &&
+            button == state_->MusicButtonAt(event.xbutton.x, event.xbutton.y) &&
+            now - state_->last_button_at >= 0.6 &&
+            state_->music_control_callback) {
+          state_->last_button_at = now;
+          const auto action = button == 0   ? common::MusicAction::Previous
+                              : button == 2 ? common::MusicAction::Next
+                              : state_->music_paused
+                                  ? common::MusicAction::Resume
+                                  : common::MusicAction::Pause;
+          state_->music_control_callback(action);
+        }
+      }
+    }
   }
+  state_->UpdateVolumeVisibility();
 }
 
 } // namespace xiaocai_robot

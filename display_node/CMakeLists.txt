@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(ament_cmake REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(X11 REQUIRED COMPONENTS Xft)
 find_package(Freetype REQUIRED)
 find_package(xiaocai_msgs REQUIRED)
@@ -32,7 +33,7 @@ add_executable(display_node
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp"
 )
-ament_target_dependencies(display_node ament_index_cpp rclcpp xiaocai_msgs)
+ament_target_dependencies(display_node ament_index_cpp rclcpp std_msgs xiaocai_msgs)
 target_include_directories(display_node PRIVATE ${X11_INCLUDE_DIR} ${FREETYPE_INCLUDE_DIRS})
 target_link_libraries(display_node ${X11_LIBRARIES} ${X11_Xft_LIB})
 

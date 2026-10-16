@@ -1,5 +1,7 @@
 #include "display_node/display_node.hpp"
+#include "defination/volume_action.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 
@@ -20,10 +22,28 @@ DisplayNode::DisplayNode()
           display_config_.Settings().font_family)),
       robot_state_(common::RobotState::Idle), lyrics_presenter_(),
       wifi_status_reader_(display_config_.Settings().wifi_interface),
-      last_wifi_update_(0.0) {
+      last_wifi_update_(0.0), last_clock_update_(0.0) {
   ShowRobotState(robot_state_);
+  InitPublishers();
   InitSubscribers();
+  InitClients();
+  display_window_->SetMusicControlCallback(
+      [this](common::MusicAction action) { PublishMusicCommand(action); });
+  display_window_->SetVolumeControlCallback(
+      [this](int percent) { PublishVolumeCommand(percent); });
   InitTimers();
+}
+
+void DisplayNode::InitPublishers() {
+  int initialized_count = 0;
+  music_command_publisher_ = create_publisher<xiaocai_msgs::msg::MusicCommand>(
+      "/xiaocai_robot/music/command", 10);
+  ++initialized_count;
+  volume_command_publisher_ =
+      create_publisher<xiaocai_msgs::msg::VolumeCommand>(
+          "/xiaocai_robot/audio/volume/silent_command", 10);
+  ++initialized_count;
+  LOG_INFO("Initialized {} publishers", initialized_count);
 }
 
 void DisplayNode::InitSubscribers() {
@@ -53,7 +73,62 @@ void DisplayNode::InitSubscribers() {
         OnMusicLoginCallback(*message);
       });
   ++initialized_count;
+  volume_state_subscriber_ = create_subscription<std_msgs::msg::Int32>(
+      "/xiaocai_robot/audio/volume/state", 10,
+      [this](std_msgs::msg::Int32::SharedPtr message) {
+        OnVolumeStateCallback(*message);
+      });
+  ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
+}
+
+void DisplayNode::InitClients() {
+  volume_client_ = create_client<xiaocai_msgs::srv::GetVolume>(
+      "/xiaocai_robot/audio/get_volume");
+}
+
+void DisplayNode::OnVolumeStateCallback(const std_msgs::msg::Int32 &message) {
+  if (message.data >= 0 && message.data <= 150)
+    display_window_->ShowVolume(message.data);
+}
+
+void DisplayNode::PublishMusicCommand(common::MusicAction action) {
+  xiaocai_msgs::msg::MusicCommand message;
+  message.timestamp = now();
+  message.action = static_cast<std::uint8_t>(action);
+  music_command_publisher_->publish(message);
+  LOG_INFO("Music page button: {}", common::MusicActionName(action));
+}
+
+void DisplayNode::PublishVolumeCommand(int percent) {
+  xiaocai_msgs::msg::VolumeCommand message;
+  message.timestamp = now();
+  message.action = static_cast<std::uint8_t>(common::VolumeAction::Set);
+  message.percent = std::clamp(percent, 0, 150);
+  volume_command_publisher_->publish(message);
+}
+
+void DisplayNode::RefreshVolume(double now) {
+  if (volume_query_pending_ && now - last_volume_query_ > 3.0) {
+    volume_client_->prune_pending_requests();
+    volume_query_pending_ = false;
+  }
+  if (volume_query_pending_ || now - last_volume_query_ < 5.0 ||
+      !volume_client_->service_is_ready())
+    return;
+  last_volume_query_ = now;
+  volume_query_pending_ = true;
+  auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
+  request->timestamp = this->now();
+  volume_client_->async_send_request(
+      request,
+      [this](
+          rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedFuture future) {
+        volume_query_pending_ = false;
+        const auto percent = future.get()->percent;
+        if (percent >= 0 && percent <= 150)
+          display_window_->ShowVolume(percent);
+      });
 }
 
 void DisplayNode::InitTimers() {
@@ -68,7 +143,6 @@ void DisplayNode::OnRobotStateCallback(
     return;
   }
   robot_state_ = static_cast<common::RobotState>(message.state);
-  lyrics_presenter_.HandleRobotState(robot_state_);
   RefreshDisplay();
 }
 
@@ -138,15 +212,20 @@ void DisplayNode::RefreshDisplay() {
   const auto music = lyrics_presenter_.CurrentView(SteadySeconds());
   if (music)
     display_window_->ShowMusic(*music);
-  else
+  else if (!display_window_->IsVolumeOverlayActive())
     ShowRobotState(robot_state_);
 }
 
 void DisplayNode::ProcessDisplayEvents() {
   const double now = SteadySeconds();
-  if (now - last_wifi_update_ >= 2.0) {
+  RefreshVolume(now);
+  if (now - last_wifi_update_ >= 1.0) {
     display_window_->ShowWifiStatus(wifi_status_reader_.Read());
     last_wifi_update_ = now;
+  }
+  if (now - last_clock_update_ >= 1.0) {
+    display_window_->RefreshClock();
+    last_clock_update_ = now;
   }
   RefreshDisplay();
   display_window_->ProcessEvents();

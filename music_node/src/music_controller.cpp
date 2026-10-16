@@ -1,6 +1,7 @@
 #include "music_node/music_controller.hpp"
 #include "common/mpv.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <fcntl.h>
@@ -34,6 +35,39 @@ MusicTrack TrackFromSong(const json &song) {
     }
   }
   return track;
+}
+
+std::string SongTitleKey(std::string title) {
+  // Versions of the same song must not occupy consecutive queue entries.
+  for (const auto *mark : {"(", "（", "[", "【"}) {
+    const auto position = title.find(mark);
+    if (position != std::string::npos && position > 0)
+      title.resize(position);
+  }
+  title.erase(std::remove_if(title.begin(), title.end(),
+                             [](unsigned char c) { return std::isspace(c); }),
+              title.end());
+  std::transform(title.begin(), title.end(), title.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return title;
+}
+
+bool SameSongTitle(const std::string &left, const std::string &right) {
+  const auto a = SongTitleKey(left);
+  const auto b = SongTitleKey(right);
+  return !a.empty() && !b.empty() && (a.rfind(b, 0) == 0 || b.rfind(a, 0) == 0);
+}
+
+bool IsPlayableSong(const json &song) {
+  return song.is_object() && song.value("playFlag", false) &&
+         song.contains("originalId") && !song["originalId"].is_null() &&
+         !song.value("id", std::string{}).empty() &&
+         !SongTitleKey(song.value("name", std::string{})).empty();
+}
+
+std::string OriginalSongId(const json &song) {
+  return song["originalId"].is_string() ? song["originalId"].get<std::string>()
+                                        : song["originalId"].dump();
 }
 } // namespace
 
@@ -137,6 +171,12 @@ void MusicController::HandleMusicCommand(common::MusicAction action,
   manually_paused_ = action == common::MusicAction::Pause ||
                      action == common::MusicAction::Stop;
   const auto revision = ++revision_;
+  if (action == common::MusicAction::Play ||
+      action == common::MusicAction::Next ||
+      action == common::MusicAction::Previous) {
+    common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
+    SetPlaybackStatus(State::Searching, {}, request_id);
+  }
   if (action == common::MusicAction::Stop ||
       action == common::MusicAction::Pause) {
     common::MpvCommand(action == common::MusicAction::Stop
@@ -188,13 +228,15 @@ void MusicController::HandleSpeechAwake(bool awake) {
   if (!awake)
     return;
   silenced_ = false;
+  bool cancel_loading = false;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    if (!manually_paused_ && !busy_ &&
+    if (!manually_paused_ &&
         (status_.state == State::Playing || status_.state == State::Paused))
       resume_after_dialogue_ = true;
+    cancel_loading = busy_ && status_.state == State::Searching;
   }
-  if (busy_) {
+  if (cancel_loading) {
     ++revision_;
     std::lock_guard<std::mutex> lock(jobs_mutex_);
     jobs_.clear();
@@ -229,6 +271,16 @@ void MusicController::HandleStateUpdate() {
     if (status_.state == State::Searching)
       return;
   }
+  bool advance = false;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    advance = idle.value("data", true) && status_.state == State::Playing &&
+              !playlist_.empty() && !manually_paused_ && !busy_;
+  }
+  if (advance) {
+    HandleMusicCommand(common::MusicAction::Next, {}, 0);
+    return;
+  }
   if (resume_after_dialogue_ && !awake_ && !conversation_active_ &&
       !voice_playing_ && !silenced_ && Monotonic() - last_voice_at_ > 0.8 &&
       Monotonic() - last_conversation_at_ > 0.8) {
@@ -248,10 +300,8 @@ void MusicController::HandleStateUpdate() {
       common::MpvCommand({"get_property", "time-pos"}, settings_.mpv_socket);
   auto duration =
       common::MpvCommand({"get_property", "duration"}, settings_.mpv_socket);
-  auto playlist_position = common::MpvCommand({"get_property", "playlist-pos"},
-                                              settings_.mpv_socket);
   std::lock_guard<std::mutex> lock(state_mutex_);
-  if (status_.state == State::Error && idle.value("data", true))
+  if (status_.state == State::Error)
     return;
   status_.state = idle.value("data", true)    ? State::Stopped
                   : pause.value("data", true) ? State::Paused
@@ -264,16 +314,6 @@ void MusicController::HandleStateUpdate() {
       common::MpvOk(duration) && duration["data"].is_number()
           ? duration["data"].get<double>()
           : 0;
-  if (common::MpvOk(playlist_position) &&
-      playlist_position["data"].is_number_integer()) {
-    const auto index = playlist_position["data"].get<std::int64_t>();
-    if (index >= 0 && static_cast<std::size_t>(index) < playlist_.size()) {
-      const auto &track = playlist_[static_cast<std::size_t>(index)];
-      status_.song_id = track.song_id;
-      status_.title = track.title;
-      status_.artist = track.artist;
-    }
-  }
   if (status_.state == State::Stopped) {
     status_.song_id.clear();
     status_.title.clear();
@@ -370,9 +410,7 @@ void MusicController::ExecuteJob(const Job &job) {
     const auto &songs = search.data["data"]["records"];
     const json *selected = nullptr;
     for (const auto &song : songs) {
-      if (!song.is_object() || !song.value("playFlag", false) ||
-          !song.contains("originalId") ||
-          song.value("id", std::string{}).empty())
+      if (!IsPlayableSong(song))
         continue;
       if (!selected)
         selected = &song;
@@ -385,171 +423,19 @@ void MusicController::ExecuteJob(const Job &job) {
       FailJob(job, "没有找到当前账号可以播放的歌曲，请换一首。");
       return;
     }
-    if (!WaitForSpeechToFinish(job.revision))
-      return;
-    // Prevent old songs from being resumed by mpv when replacing the queue
-    // entry.
-    common::MpvCommand({"stop"}, settings_.mpv_socket);
-    const std::vector<std::string> play_args{
-        "play",           "--song",
-        "--encrypted-id", selected->value("id", std::string{}),
-        "--original-id",  (*selected)["originalId"].dump(),
-        "--output",       "json"};
-    auto play = RunCliCommand(play_args, job.revision);
-    if (!IsJobCurrent(job.revision)) {
-      common::MpvCommand({"stop"}, settings_.mpv_socket);
-      return;
-    }
-    if (!EnsureBackendSubscription(job.revision)) {
-      common::MpvCommand({"stop"}, settings_.mpv_socket);
-      FailJob(job, "网易云播放器后台没有保持连接，请稍后再试。");
-      return;
-    }
-
-    auto wait_for_track = [&](double seconds) {
-      const double until = Monotonic() + seconds;
-      while (IsJobCurrent(job.revision) && Monotonic() < until) {
-        auto idle = common::MpvCommand({"get_property", "idle-active"},
-                                       settings_.mpv_socket);
-        if (common::MpvOk(idle) && !idle.value("data", true)) {
-          const auto audio = common::MpvCommand(
-              {"get_property", "audio-out-params"}, settings_.mpv_socket);
-          if (common::MpvOk(audio) && audio.contains("data") &&
-              audio["data"].is_object())
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      }
-      return false;
-    };
-    // The CLI starts a detached controller before song lookup and MPV startup
-    // complete. Keep its daemon subscribed and allow the compatibility
-    // adapter's 20-second request budget before considering a retry.
-    // Audio output initialization, not the detached CLI's exit code, confirms
-    // that the track loaded.
-    bool loaded = wait_for_track(25.0);
-    if (!loaded && IsJobCurrent(job.revision)) {
-      LOG_WARN(
-          "ncm-cli did not load the track on first attempt; retrying once");
-      LOG_WARN("First ncm-cli play: exit_code={} timed_out={}", play.exit_code,
-               play.timed_out);
-      play = RunCliCommand(play_args, job.revision);
-      if (!IsJobCurrent(job.revision)) {
-        common::MpvCommand({"stop"}, settings_.mpv_socket);
-        return;
-      }
-      loaded = wait_for_track(25.0);
-    }
-    if (!loaded) {
-      if (!play.ok ||
-          (play.data.is_object() && !play.data.value("success", false)))
-        LOG_WARN("ncm-cli play failed: exit_code={} timed_out={}",
-                 play.exit_code, play.timed_out);
-      common::MpvCommand({"stop"}, settings_.mpv_socket);
-      FailJob(job, "网易云后台两次都没有加载出歌曲，请稍后再试。");
-      return;
-    }
-    std::vector<MusicTrack> playlist{TrackFromSong(*selected)};
-    common::MpvCommand({"set_property", "audio-device", settings_.audio_device},
-                       settings_.mpv_socket);
     {
-      auto idle = common::MpvCommand({"get_property", "idle-active"},
-                                     settings_.mpv_socket);
-      if (common::MpvOk(idle) && !idle.value("data", true)) {
-        // Start the selected track immediately. Filling the follow-up queue
-        // performs network requests and must not keep the first song paused.
-        // Repeat the current track until the complete playlist is prepared.
-        if (!common::MpvOk(common::MpvCommand(
-                {"set_property", "loop-file", "inf"}, settings_.mpv_socket))) {
-          FailJob(job, "网易云播放器无法保持连续播放，请稍后再试。");
-          return;
-        }
-        if (!voice_playing_ &&
-            !common::MpvOk(common::MpvCommand({"set_property", "pause", false},
-                                              settings_.mpv_socket))) {
-          common::MpvCommand({"stop"}, settings_.mpv_socket);
-          FailJob(job, "音乐已加载，但无法从扬声器开始播放。");
-          return;
-        }
-        bool playing = false;
-        const double verify_until = Monotonic() + 2.0;
-        while (IsJobCurrent(job.revision) && Monotonic() < verify_until) {
-          auto active = common::MpvCommand({"get_property", "idle-active"},
-                                           settings_.mpv_socket);
-          auto paused = common::MpvCommand({"get_property", "pause"},
-                                           settings_.mpv_socket);
-          if (common::MpvOk(active) && common::MpvOk(paused) &&
-              !active.value("data", true) && !paused.value("data", true)) {
-            playing = true;
-            break;
-          }
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        if (!playing) {
-          common::MpvCommand({"stop"}, settings_.mpv_socket);
-          FailJob(job, "音乐没有从扬声器真正播放出来，请稍后再试。");
-          return;
-        }
-        {
-          std::lock_guard<std::mutex> lock(state_mutex_);
-          playlist_ = playlist;
-          status_.song_id = playlist_.front().song_id;
-          status_.title = playlist_.front().title;
-          status_.artist = playlist_.front().artist;
-        }
-        SetPlaybackStatus(State::Playing, {}, job.request_id);
-        LOG_INFO("MusicNode playback started: {}",
-                 selected->value("name", std::string{}));
-        // `play --song` replaces the ncm-cli queue with just the selected
-        // track. Append playable search results, then loop the complete queue
-        // forever.
-        bool after_selected = false;
-        size_t queued = 0;
-        size_t attempts = 0;
-        for (const auto &song : songs) {
-          if (&song == selected) {
-            after_selected = true;
-            continue;
-          }
-          if (!after_selected || attempts >= 5 || !song.is_object() ||
-              !song.value("playFlag", false) || !song.contains("id") ||
-              !song.contains("originalId"))
-            continue;
-          const auto encrypted_id = song.value("id", std::string{});
-          if (encrypted_id.empty() ||
-              encrypted_id == selected->value("id", std::string{}))
-            continue;
-          ++attempts;
-          auto added = RunCliCommand(
-              {"queue", "add", "--encrypted-id", encrypted_id, "--original-id",
-               song["originalId"].dump(), "--output", "json"},
-              job.revision);
-          if (!IsJobCurrent(job.revision))
-            return;
-          if (added.ok && added.data.is_object() &&
-              added.data.value("success", false)) {
-            ++queued;
-            playlist.push_back(TrackFromSong(song));
-            std::lock_guard<std::mutex> lock(state_mutex_);
-            playlist_ = playlist;
-          } else {
-            LOG_WARN("Could not queue next search result: exit_code={} "
-                     "timed_out={}",
-                     added.exit_code, added.timed_out);
-          }
-        }
-        const auto loop = common::MpvCommand(
-            {"set_property", "loop-playlist", "inf"}, settings_.mpv_socket);
-        if (common::MpvOk(loop))
-          common::MpvCommand({"set_property", "loop-file", "no"},
-                             settings_.mpv_socket);
-        else
-          LOG_WARN("Could not loop the playlist; keeping current track loop");
-        LOG_INFO("Music queue ready: {} follow-up tracks", queued);
-        return;
-      }
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      playlist_ = {{TrackFromSong(*selected), OriginalSongId(*selected)}};
+      playlist_index_ = 0;
     }
-    FailJob(job, "音乐加载后播放器状态丢失，请稍后再试。");
+    AppendPlaylist(songs);
+    QueueTrack track;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      track = playlist_.front();
+      LOG_INFO("Music queue selected: {} distinct songs", playlist_.size());
+    }
+    PlayTrack(job, track, 0);
   } else if (job.action == Action::Resume) {
     if (!WaitForSpeechToFinish(job.revision))
       return;
@@ -572,19 +458,173 @@ void MusicController::ExecuteJob(const Job &job) {
   } else if (job.action == Action::Next || job.action == Action::Previous) {
     if (!WaitForSpeechToFinish(job.revision))
       return;
-    auto result = RunCliCommand({job.action == Action::Next ? "next" : "prev"},
-                                job.revision);
-    if (!IsJobCurrent(job.revision))
+    bool needs_alternatives = false;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      needs_alternatives = playlist_.size() == 1;
+    }
+    if (needs_alternatives) {
+      // A specific-song search can contain only covers of that song. Broaden
+      // the search instead of treating another version as the next song.
+      auto search =
+          RunCliCommand({"search", "song", "--keyword",
+                         settings_.default_keyword, "--output", "json"},
+                        job.revision);
+      if (!IsJobCurrent(job.revision))
+        return;
+      if (search.ok && search.data.is_object() &&
+          search.data.value("code", 0) == 200 && search.data.contains("data") &&
+          search.data["data"].is_object() &&
+          search.data["data"].contains("records") &&
+          search.data["data"]["records"].is_array()) {
+        AppendPlaylist(search.data["data"]["records"]);
+      } else {
+        LOG_WARN("Music alternatives search failed: exit_code={} timed_out={}",
+                 search.exit_code, search.timed_out);
+      }
+    }
+    QueueTrack track;
+    std::size_t index = 0;
+    bool found = false;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      if (playlist_.size() > 1) {
+        index =
+            job.action == Action::Next
+                ? (playlist_index_ + 1) % playlist_.size()
+                : (playlist_index_ + playlist_.size() - 1) % playlist_.size();
+        track = playlist_[index];
+        found = true;
+      }
+    }
+    if (!found) {
+      FailJob(job, "没有找到其他可播放的歌曲，请点一首新的歌。");
       return;
-    if (!result.ok || !result.data.is_object() ||
-        !result.data.value("success", false))
-      FailJob(job, "没有可切换的歌曲，请点一首新的歌。");
-    else if (common::MpvOk(common::MpvCommand({"set_property", "pause", false},
-                                              settings_.mpv_socket)))
-      SetPlaybackStatus(State::Playing, {}, job.request_id);
-    else
-      FailJob(job, "音乐暂时无法切换播放。");
+    }
+    PlayTrack(job, track, index);
   }
+}
+
+void MusicController::AppendPlaylist(const json &songs) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  for (const auto &song : songs) {
+    if (playlist_.size() >= 6)
+      break;
+    if (!IsPlayableSong(song))
+      continue;
+    auto track = TrackFromSong(song);
+    const bool duplicate = std::any_of(
+        playlist_.begin(), playlist_.end(), [&](const QueueTrack &queued) {
+          return queued.track.song_id == track.song_id ||
+                 SameSongTitle(queued.track.title, track.title);
+        });
+    if (!duplicate)
+      playlist_.push_back({std::move(track), OriginalSongId(song)});
+  }
+}
+
+void MusicController::PlayTrack(const Job &job, const QueueTrack &track,
+                                std::size_t index) {
+  if (!WaitForSpeechToFinish(job.revision))
+    return;
+  const auto previous_path =
+      common::MpvCommand({"get_property", "path"}, settings_.mpv_socket);
+  const bool switching = job.action == common::MusicAction::Next ||
+                         job.action == common::MusicAction::Previous;
+  // Each CLI play owns one track. The robot owns song order and metadata.
+  common::MpvCommand({"set_property", "loop-file", "no"}, settings_.mpv_socket);
+  common::MpvCommand({"set_property", "loop-playlist", "no"},
+                     settings_.mpv_socket);
+  common::MpvCommand({"stop"}, settings_.mpv_socket);
+  const std::vector<std::string> play_args{
+      "play",          "--song",          "--encrypted-id", track.track.song_id,
+      "--original-id", track.original_id, "--output",       "json"};
+  auto play = RunCliCommand(play_args, job.revision);
+  if (!IsJobCurrent(job.revision)) {
+    common::MpvCommand({"stop"}, settings_.mpv_socket);
+    return;
+  }
+  if (!EnsureBackendSubscription(job.revision)) {
+    common::MpvCommand({"stop"}, settings_.mpv_socket);
+    FailJob(job, "网易云播放器后台没有保持连接，请稍后再试。");
+    return;
+  }
+
+  auto wait_for_track = [&](double seconds) {
+    const double until = Monotonic() + seconds;
+    while (IsJobCurrent(job.revision) && Monotonic() < until) {
+      auto idle = common::MpvCommand({"get_property", "idle-active"},
+                                     settings_.mpv_socket);
+      if (common::MpvOk(idle) && !idle.value("data", true)) {
+        const auto path =
+            common::MpvCommand({"get_property", "path"}, settings_.mpv_socket);
+        if (switching && common::MpvOk(previous_path) &&
+            (!common::MpvOk(path) || path["data"] == previous_path["data"])) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          continue;
+        }
+        const auto audio = common::MpvCommand(
+            {"get_property", "audio-out-params"}, settings_.mpv_socket);
+        if (common::MpvOk(audio) && audio.contains("data") &&
+            audio["data"].is_object())
+          return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return false;
+  };
+  // The CLI starts a detached controller before song lookup and MPV startup
+  // complete. Keep its daemon subscribed and allow the compatibility
+  // adapter's 20-second request budget before considering a retry.
+  // Audio output initialization, not the detached CLI's exit code, confirms
+  // that the track loaded.
+  bool loaded = wait_for_track(25.0);
+  if (!loaded && IsJobCurrent(job.revision)) {
+    LOG_WARN("ncm-cli did not load the track on first attempt; retrying once");
+    LOG_WARN("First ncm-cli play: exit_code={} timed_out={}", play.exit_code,
+             play.timed_out);
+    play = RunCliCommand(play_args, job.revision);
+    if (!IsJobCurrent(job.revision)) {
+      common::MpvCommand({"stop"}, settings_.mpv_socket);
+      return;
+    }
+    loaded = wait_for_track(25.0);
+  }
+  if (!loaded) {
+    if (!play.ok ||
+        (play.data.is_object() && !play.data.value("success", false)))
+      LOG_WARN("ncm-cli play failed: exit_code={} timed_out={}", play.exit_code,
+               play.timed_out);
+    common::MpvCommand({"stop"}, settings_.mpv_socket);
+    FailJob(job, "网易云后台两次都没有加载出歌曲，请稍后再试。");
+    return;
+  }
+  if (!IsJobCurrent(job.revision))
+    return;
+  common::MpvCommand({"set_property", "audio-device", settings_.audio_device},
+                     settings_.mpv_socket);
+  if (!common::MpvOk(common::MpvCommand({"set_property", "pause", false},
+                                        settings_.mpv_socket))) {
+    FailJob(job, "音乐已加载，但无法从扬声器开始播放。");
+    return;
+  }
+  const auto paused =
+      common::MpvCommand({"get_property", "pause"}, settings_.mpv_socket);
+  if (!common::MpvOk(paused) || paused.value("data", true)) {
+    FailJob(job, "音乐没有从扬声器真正播放出来，请稍后再试。");
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    playlist_index_ = index;
+    status_.song_id = track.track.song_id;
+    status_.title = track.track.title;
+    status_.artist = track.track.artist;
+    status_.position_seconds = 0;
+  }
+  SetPlaybackStatus(State::Playing, {}, job.request_id);
+  LOG_INFO("MusicNode playback started: {} - {}; queue_index={}",
+           track.track.title, track.track.artist, index);
 }
 
 bool MusicController::IsJobCurrent(std::uint64_t revision) const {
@@ -609,16 +649,17 @@ void MusicController::SetPlaybackStatus(State state, const std::string &error,
 }
 
 bool MusicController::EnsureBackendSubscription(std::uint64_t revision) {
-  std::lock_guard<std::mutex> lock(backend_mutex_);
-  if (backend_fd_ >= 0)
-    return true;
-
   std::string directory = settings_.mpv_socket;
   const auto slash = directory.find_last_of('/');
   directory = slash == std::string::npos ? "." : directory.substr(0, slash);
   const std::string control_path = directory + "/player-daemon.sock";
-  const double deadline = Monotonic() + 5.0;
+  const double deadline = Monotonic() + 25.0;
   while (IsJobCurrent(revision) && Monotonic() < deadline) {
+    {
+      std::lock_guard<std::mutex> lock(backend_mutex_);
+      if (backend_fd_ >= 0)
+        return true;
+    }
     int subscription = ConnectUnix(control_path);
     if (subscription >= 0) {
       const std::string request = json{{"command", "subscribe"},
@@ -635,6 +676,15 @@ bool MusicController::EnsureBackendSubscription(std::uint64_t revision) {
           const int flags = ::fcntl(subscription, F_GETFL, 0);
           if (flags >= 0)
             ::fcntl(subscription, F_SETFL, flags | O_NONBLOCK);
+          std::lock_guard<std::mutex> lock(backend_mutex_);
+          if (!IsJobCurrent(revision)) {
+            ::close(subscription);
+            return false;
+          }
+          if (backend_fd_ >= 0) {
+            ::close(subscription);
+            return true;
+          }
           backend_fd_ = subscription;
           LOG_INFO("Subscribed to ncm-cli player daemon state");
           return true;

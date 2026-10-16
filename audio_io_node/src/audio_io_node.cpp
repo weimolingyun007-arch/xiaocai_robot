@@ -97,6 +97,13 @@ void AudioIoNode::InitSubscribers() {
             OnVolumeCommandCallback(message);
           });
   ++initialized_count;
+  silent_volume_command_subscriber_ =
+      create_subscription<xiaocai_msgs::msg::VolumeCommand>(
+          "/xiaocai_robot/audio/volume/silent_command", 10,
+          [this](xiaocai_msgs::msg::VolumeCommand::SharedPtr message) {
+            OnVolumeCommandCallback(message, false);
+          });
+  ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
@@ -153,14 +160,14 @@ void AudioIoNode::OnAudioPlayCallback(
 }
 
 void AudioIoNode::OnVolumeCommandCallback(
-    const xiaocai_msgs::msg::VolumeCommand::SharedPtr message) {
+    const xiaocai_msgs::msg::VolumeCommand::SharedPtr message, bool notify) {
   const auto action = static_cast<common::VolumeAction>(message->action);
   if (action == common::VolumeAction::Up)
-    SetVolume(volume_percent_ + 10, true);
+    SetVolume(volume_percent_ + 10, notify);
   else if (action == common::VolumeAction::Down)
-    SetVolume(volume_percent_ - 10, true);
+    SetVolume(volume_percent_ - 10, notify);
   else if (action == common::VolumeAction::Set)
-    SetVolume(message->percent, true);
+    SetVolume(message->percent, notify);
 }
 
 void AudioIoNode::SetVolume(int percent, bool notify) {

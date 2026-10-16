@@ -5,12 +5,7 @@
 
 namespace xiaocai_robot {
 
-LyricsPresenter::LyricsPresenter()
-    : robot_state_(common::RobotState::Idle), updated_at_(0.0) {}
-
-void LyricsPresenter::HandleRobotState(common::RobotState state) {
-  robot_state_ = state;
-}
+LyricsPresenter::LyricsPresenter() : updated_at_(0.0) {}
 
 bool LyricsPresenter::HandleMusicState(const DisplayMusicState &state,
                                        double monotonic) {
@@ -21,6 +16,21 @@ bool LyricsPresenter::HandleMusicState(const DisplayMusicState &state,
       static_cast<unsigned int>(state.state) >
           static_cast<unsigned int>(common::MusicState::Error))
     return false;
+  if (state.state == common::MusicState::Searching) {
+    if (music_state_.state == common::MusicState::Playing ||
+        music_state_.state == common::MusicState::Paused) {
+      searching_fallback_ = CurrentView(monotonic);
+      if (searching_fallback_)
+        searching_fallback_->paused = true;
+    } else if (music_state_.state != common::MusicState::Searching) {
+      searching_fallback_.reset();
+    }
+  } else if (state.state == common::MusicState::Playing ||
+             state.state == common::MusicState::Paused ||
+             state.state == common::MusicState::Stopped ||
+             state.state == common::MusicState::Error) {
+    searching_fallback_.reset();
+  }
   music_state_ = state;
   updated_at_ = monotonic;
   return true;
@@ -44,10 +54,10 @@ bool LyricsPresenter::HandleLyrics(const LyricsTimeline &timeline) {
 }
 
 std::optional<MusicView> LyricsPresenter::CurrentView(double monotonic) const {
-  if ((music_state_.state != common::MusicState::Playing &&
-       music_state_.state != common::MusicState::Paused) ||
-      (robot_state_ != common::RobotState::Idle &&
-       robot_state_ != common::RobotState::Quiet))
+  if (music_state_.state == common::MusicState::Searching)
+    return searching_fallback_;
+  if (music_state_.state != common::MusicState::Playing &&
+      music_state_.state != common::MusicState::Paused)
     return std::nullopt;
   MusicView view;
   view.title = music_state_.title.empty() ? "音乐播放" : music_state_.title;

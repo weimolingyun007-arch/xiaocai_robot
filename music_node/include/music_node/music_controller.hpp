@@ -64,10 +64,16 @@ private:
     int exit_code{-1};
     bool timed_out{false};
   };
+  struct QueueTrack {
+    MusicTrack track;
+    std::string original_id;
+  };
 
   // Background worker loop and per-job execution.
   void WorkerLoop();
   void ExecuteJob(const Job &job);
+  void AppendPlaylist(const json &songs);
+  void PlayTrack(const Job &job, const QueueTrack &track, std::size_t index);
 
   // Job validity and playback status.
   bool IsJobCurrent(std::uint64_t revision) const;
@@ -102,7 +108,8 @@ private:
   std::thread worker_;
   int backend_fd_;
   MusicPlaybackStatus status_;
-  std::vector<MusicTrack> playlist_;
+  std::vector<QueueTrack> playlist_;
+  std::size_t playlist_index_{0};
 };
 
 } // namespace xiaocai_robot

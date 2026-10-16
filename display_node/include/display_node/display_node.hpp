@@ -6,10 +6,14 @@
 #include "display_node/display_window.hpp"
 #include "display_node/lyrics_presenter.hpp"
 #include "display_node/wifi_status_reader.hpp"
+#include "xiaocai_msgs/msg/music_command.hpp"
 #include "xiaocai_msgs/msg/music_login.hpp"
 #include "xiaocai_msgs/msg/music_lyrics.hpp"
 #include "xiaocai_msgs/msg/music_state.hpp"
 #include "xiaocai_msgs/msg/robot_state.hpp"
+#include "xiaocai_msgs/msg/volume_command.hpp"
+#include "xiaocai_msgs/srv/get_volume.hpp"
+#include <std_msgs/msg/int32.hpp>
 
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
@@ -22,7 +26,9 @@ public:
 
 private:
   // ROS communication and timer initialization.
+  void InitPublishers();
   void InitSubscribers();
+  void InitClients();
   void InitTimers();
 
   // ROS subscription callbacks.
@@ -30,6 +36,10 @@ private:
   void OnMusicStateCallback(const xiaocai_msgs::msg::MusicState &message);
   void OnMusicLyricsCallback(const xiaocai_msgs::msg::MusicLyrics &message);
   void OnMusicLoginCallback(const xiaocai_msgs::msg::MusicLogin &message);
+  void OnVolumeStateCallback(const std_msgs::msg::Int32 &message);
+  void PublishMusicCommand(common::MusicAction action);
+  void PublishVolumeCommand(int percent);
+  void RefreshVolume(double now);
 
   // Display state and X11 event handling.
   void ShowRobotState(common::RobotState state);
@@ -43,6 +53,16 @@ private:
   LyricsPresenter lyrics_presenter_;
   WifiStatusReader wifi_status_reader_;
   double last_wifi_update_;
+  double last_clock_update_;
+  double last_volume_query_{-5.0};
+  bool volume_query_pending_{false};
+  rclcpp::Publisher<xiaocai_msgs::msg::MusicCommand>::SharedPtr
+      music_command_publisher_;
+  rclcpp::Publisher<xiaocai_msgs::msg::VolumeCommand>::SharedPtr
+      volume_command_publisher_;
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr
+      volume_state_subscriber_;
+  rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedPtr volume_client_;
   rclcpp::Subscription<xiaocai_msgs::msg::RobotState>::SharedPtr
       robot_state_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::MusicState>::SharedPtr

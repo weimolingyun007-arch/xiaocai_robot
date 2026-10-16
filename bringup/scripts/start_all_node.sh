@@ -41,6 +41,12 @@ export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 if command -v xrandr >/dev/null 2>&1; then
   xrandr --output DSI-1 --rotate right
 fi
+if command -v xinput >/dev/null 2>&1; then
+  input_devices="$(xinput list --short 2>/dev/null || true)"
+  if grep -Fq 'my touch screen' <<< "$input_devices"; then
+    xinput map-to-output 'my touch screen' DSI-1
+  fi
+fi
 
 for module in audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node; do
   executable="$workspace/bin/$module"

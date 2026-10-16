@@ -1,7 +1,6 @@
 #pragma once
 
 #include "defination/music_state.hpp"
-#include "defination/robot_state.hpp"
 
 #include <optional>
 #include <string>
@@ -39,14 +38,13 @@ struct MusicView {
 class LyricsPresenter {
 public:
   LyricsPresenter();
-  void HandleRobotState(common::RobotState state);
   bool HandleMusicState(const DisplayMusicState &state, double monotonic);
   bool HandleLyrics(const LyricsTimeline &timeline);
   std::optional<MusicView> CurrentView(double monotonic) const;
 
 private:
-  common::RobotState robot_state_;
   DisplayMusicState music_state_;
+  std::optional<MusicView> searching_fallback_;
   LyricsTimeline timeline_;
   double updated_at_;
 };

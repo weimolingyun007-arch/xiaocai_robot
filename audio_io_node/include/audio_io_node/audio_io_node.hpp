@@ -38,7 +38,8 @@ private:
   void
   OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay::SharedPtr message);
   void OnVolumeCommandCallback(
-      const xiaocai_msgs::msg::VolumeCommand::SharedPtr message);
+      const xiaocai_msgs::msg::VolumeCommand::SharedPtr message,
+      bool notify = true);
 
   // Playback configuration and PCM helpers.
   void SetVolume(int percent, bool notify = false);
@@ -68,6 +69,8 @@ private:
       play_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::VolumeCommand>::SharedPtr
       volume_command_subscriber_;
+  rclcpp::Subscription<xiaocai_msgs::msg::VolumeCommand>::SharedPtr
+      silent_volume_command_subscriber_;
   rclcpp::Service<xiaocai_msgs::srv::GetVolume>::SharedPtr volume_get_server_;
 };
 
