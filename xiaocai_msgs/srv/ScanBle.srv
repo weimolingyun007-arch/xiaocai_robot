@@ -1,0 +1,6 @@
+builtin_interfaces/Time timestamp
+uint8 duration_sec
+---
+bool success
+xiaocai_msgs/BleScanList scan_list
+string error

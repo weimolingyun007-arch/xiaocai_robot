@@ -2,7 +2,8 @@
 
 #include "defination/music_action.hpp"
 #include "display_node/lyrics_presenter.hpp"
-#include "display_node/wifi_status_reader.hpp"
+#include "xiaocai_msgs/msg/ble_status.hpp"
+#include "xiaocai_msgs/msg/wifi_status.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -23,7 +24,8 @@ public:
   void ShowImage(const std::string &image_name);
   void ShowMusic(const MusicView &view);
   bool IsVolumeOverlayActive() const;
-  void ShowWifiStatus(const WifiStatus &status);
+  void ShowWifiStatus(const xiaocai_msgs::msg::WifiStatus &status);
+  void ShowBleStatus(const xiaocai_msgs::msg::BleStatus &status);
   void RefreshClock();
   void
   SetMusicControlCallback(std::function<void(common::MusicAction)> callback);

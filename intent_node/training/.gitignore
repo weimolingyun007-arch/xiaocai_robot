@@ -1,0 +1,7 @@
+.venv/
+output/
+runs/
+onnx/
+*.onnx
+checkpoint-*/
+__pycache__/

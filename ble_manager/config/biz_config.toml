@@ -1,0 +1,8 @@
+[logging]
+directory = "/userdata/log/ble_manager"
+level = "info"
+pattern = "%Y-%m-%d %H:%M:%S.%e [%^%l%$] [%n] %v"
+console = true
+max_file_size_mb = 20
+max_files_per_day = 3
+retention_days = 7

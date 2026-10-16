@@ -28,7 +28,6 @@ add_executable(display_node
   src/display_node.cpp
   src/display_window.cpp
   src/lyrics_presenter.cpp
-  src/wifi_status_reader.cpp
   "${VENDOR_DIR}/qrcodegen-1.8.0/qrcodegen.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp"

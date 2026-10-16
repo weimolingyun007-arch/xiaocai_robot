@@ -1,0 +1,5 @@
+builtin_interfaces/Time timestamp
+---
+bool success
+string error
+xiaocai_msgs/WifiStatus status

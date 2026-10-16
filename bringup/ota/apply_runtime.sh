@@ -103,7 +103,7 @@ mkdir -p "$stage"
 tar -xzf "$archive" -C "$stage" --no-same-owner
 [[ -z "$(find "$payload" -type l -print -quit)" ]] || { echo 'Package contains a symbolic link.' >&2; exit 1; }
 
-modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node)
+modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node wifi_manager ble_manager display_node)
 for module in "${modules[@]}"; do
   [[ -f "$payload/config/$module/biz_config.toml" ]] || { echo "Package is missing config: $module/biz_config.toml" >&2; exit 1; }
 done

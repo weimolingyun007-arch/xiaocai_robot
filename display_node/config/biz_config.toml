@@ -1,7 +1,6 @@
 [display]
 asset_directory = "display"
 font_family = "Noto Sans CJK SC"
-wifi_interface = "wlan0"
 
 [logging]
 directory = "/userdata/log/display_node"

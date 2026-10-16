@@ -4,7 +4,7 @@
 
 ## 工程结构
 
-八个 ROS 2 节点目录直接放在工程根目录。每个节点目录包含自己的 `include/`、`src/`、`CMakeLists.txt` 和 `package.xml`。
+十个 ROS 2 节点目录直接放在工程根目录。每个节点目录包含自己的 `include/`、`src/`、`CMakeLists.txt` 和 `package.xml`。
 
 | 目录 | 职责 |
 | --- | --- |
@@ -15,6 +15,8 @@
 | `memory_node` | SQLite 记忆、免打扰状态和提醒 |
 | `tts_node` | sherpa-onnx 离线中文语音合成 |
 | `music_node` | 调用网易云 ncm-cli 搜歌、播放及控制 |
+| `wifi_manager` | 扫描和连接 Wi-Fi、自动重连并发布连接状态及上下行速率 |
+| `ble_manager` | 管理蓝牙低功耗扫描、连接、GATT 写入与通知接收，并发布蓝牙状态 |
 | `display_node` | 横屏表情、音乐信息和同步歌词显示 |
 | `common` | 节点共享的配置基类、日志管理、业务枚举和 MPV 辅助函数 |
 | `thirdparty` | C++ 头文件和 ARM64 动态库 |
@@ -96,7 +98,7 @@ make ota
 make deploy
 ```
 
-`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。八个可执行文件集中在 `bin/`；八个节点的 `biz_config.toml` 放在 `config/<节点名>/`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 加载；语音模型和唤醒提示音放在 `resource/speech/`、语音合成模型放在 `resource/tts/`、六种表情素材放在 `resource/display/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。`bringup/` 包含启停脚本和 systemd 服务单元。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
+`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。十个可执行文件集中在 `bin/`；十个节点的 `biz_config.toml` 放在 `config/<节点名>/`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 加载；语音模型和唤醒提示音放在 `resource/speech/`、语音合成模型放在 `resource/tts/`、六种表情素材放在 `resource/display/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。`bringup/` 包含启停脚本和 systemd 服务单元。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
 
 `make deploy` 调用 ADB 部署脚本，将最新压缩包传到板端 `/home/lckfb/xiaocai_robot`，替换整个运行目录并重启服务；它不会重新编译或打包。板端运行目录包含 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。
 
@@ -146,9 +148,9 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/music/lyrics`：`MusicLyrics`，歌曲编号、标题、歌手、加载标记、每句开始秒数和文字；保留最近一首的完整时间线
 - `/xiaocai_robot/audio/get_volume`：读取当前音量的服务（`xiaocai_msgs/srv/GetVolume`）
 
-`Intent.type` 使用 `uint8` 承载 `xiaocai_robot::common::IntentType` 的枚举值；该枚举只表示对话节点处理的闲聊、音量查询、免打扰开关和提醒澄清，名称和值定义在 `common/include/defination/intent_type.hpp`。音乐、音量调节、记忆和提醒创建分别通过 `MusicCommand`、`VolumeCommand`、`MemoryCommand` 传递，并使用 `MusicAction`、`VolumeAction`、`MemoryOperation` 表示操作类型；这些枚举定义在 `common/include/defination/`。`MusicCommand.request_id` 与 `MusicState.request_id` 使用 `uint64`；`0` 表示普通语音命令，音乐工具请求使用非零编号并由 `MusicState` 原样回传。所有 `xiaocai_msgs` 消息和服务请求的首字段均为 `builtin_interfaces/Time timestamp`，发送时填写本节点 ROS 时钟。
+`Intent.type` 使用 `uint8` 承载 `xiaocai_robot::common::IntentType` 的枚举值；该枚举只表示对话节点处理的闲聊、音量查询、免打扰开关和提醒澄清，名称和值定义在 `common/include/defination/intent_type.hpp`。音乐、音量调节、记忆和提醒创建分别通过 `MusicCommand`、`VolumeCommand`、`MemoryCommand` 传递，并使用 `MusicAction`、`VolumeAction`、`MemoryOperation` 表示操作类型；这些枚举定义在 `common/include/defination/`。`MusicCommand.request_id` 与 `MusicState.request_id` 使用 `uint64`；`0` 表示普通语音命令，音乐工具请求使用非零编号并由 `MusicState` 原样回传。除周期发布的 `BleStatus` 状态快照外，`xiaocai_msgs` 消息和服务请求的首字段均为 `builtin_interfaces/Time timestamp`，发送时填写本节点 ROS 时钟。
 
-所有机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。对话意图、音乐操作、音量操作和记忆操作使用各自的自定义命令消息，避免把无关业务参数混装在一个通用消息中。状态与操作枚举统一在 `common/include/defination/` 的 C++ 枚举中定义，由消息的整数型字段承载；`.msg` 不声明重复的枚举常量。每个自定义消息以及服务请求部分的首字段都是 `builtin_interfaces/Time timestamp`。自定义接口定义位于 `xiaocai_msgs/msg/` 与 `xiaocai_msgs/srv/`，由 `make build` 先生成，再编译依赖节点。
+所有机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。对话意图、音乐操作、音量操作和记忆操作使用各自的自定义命令消息，避免把无关业务参数混装在一个通用消息中。状态与操作枚举统一在 `common/include/defination/` 的 C++ 枚举中定义，由消息的整数型字段承载；`.msg` 不声明重复的枚举常量。除 `BleStatus` 外，每个自定义消息以及服务请求部分的首字段都是 `builtin_interfaces/Time timestamp`。自定义接口定义位于 `xiaocai_msgs/msg/` 与 `xiaocai_msgs/srv/`，由 `make build` 先生成，再编译依赖节点。
 
 ## 网易云语音点歌
 
@@ -176,7 +178,11 @@ sudo bash bringup/ota/install_autostart.sh
 
 ### Wi-Fi 常驻状态与网易云扫码登录
 
-顶部状态栏在表情、歌词和登录页面都显示左侧系统日期和时间（`YYYY-MM-DD  HH:MM`，日期与时间之间两个空格），右侧显示 Wi-Fi 下行/上行速率和连接图标。速率每秒采样一次，读取配置接口的 `rx_bytes`/`tx_bytes` 计数计算，按 B/s、K/s 或 M/s 显示；接口未连接或暂时无法读取计数时显示 `--`。连接后 Wi-Fi 图标按信号强弱点亮青色弧线，未连接或接口不可用时显示灰色图标和斜线。接口由 `[display].wifi_interface` 配置，默认 `wlan0`；信号取 `/proc/net/wireless` 的 dBm 值，连接状态依据链路和有效 IP 地址。这个图标表示无线连接，不等于网易云接口必然可用。
+`wifi_manager` 通过 NetworkManager 扫描网络、连接指定 SSID，并为保存的网络开启自动重连；断线时也会定期尝试恢复连接。`/xiaocai_robot/wifi/get_list` 返回网络名称、信号百分比和是否加密，`/xiaocai_robot/wifi/connect` 负责连接，`/xiaocai_robot/wifi/get_status` 查询状态。Wi-Fi 密码通过服务请求的标准输入传给 `nmcli`，不会写入节点日志。节点每秒发布 `/xiaocai_robot/wifi/status`，包含连接状态、信号强度、IP 地址和上下行速率。
+
+`ble_manager` 通过板端 BlueZ 的 `bluetoothctl` 管理 BLE：`/xiaocai_robot/ble/scan` 扫描附近设备并返回 `BleScanList`，列表项 `BleScanResult` 含地址、名称和可选 RSSI；`/xiaocai_robot/ble/connect` 按地址请求连接，`/xiaocai_robot/ble/disconnect` 断开连接。主动向设备发送数据使用 `/xiaocai_robot/ble/send` 服务，将字节写入指定 GATT 特征并返回操作结果；设备异步通知或返回的数据发布到 `/xiaocai_robot/ble/received` 话题。`/xiaocai_robot/ble/notify` 服务开关特征通知。`/xiaocai_robot/ble/get_status` 可查询状态，节点每两秒发布 `/xiaocai_robot/ble/status`。`BleStatus.state` 由 `common/include/defination/ble_status.hpp` 定义：`0 Disconnected` 表示没有连接或扫描（适配器不可用、关闭或空闲也归此值），`1 Scanning` 表示扫描中，`2 Connected` 表示已有设备连接；扫描与连接同时发生时优先报告 `Connected`。状态不携带采样时间；连接地址和名称只在 `Connected` 状态下有效。扫描时长为 1–30 秒。GATT 特征参数可传 UUID 或 BlueZ 显示的属性句柄。板端需运行 BlueZ 服务并提供 `bluetoothctl`。显示节点将蓝牙图标放在状态栏最右侧，Wi-Fi 图标紧邻其左侧。
+
+`display_node` 订阅 Wi-Fi 和蓝牙状态消息，顶部状态栏在表情、歌词和登录页面都显示左侧系统日期和时间（`YYYY-MM-DD  HH:MM`，日期与时间之间两个空格），右侧显示 Wi-Fi 下行/上行速率和连接图标。速率按 B/s、K/s 或 M/s 显示；接口未连接或暂时无法读取计数时显示 `--`。连接后 Wi-Fi 图标按信号强弱点亮青色弧线，未连接或接口不可用时显示灰色图标和斜线。这个图标表示无线连接，不等于网易云接口必然可用。
 
 收到音乐播放指令后，在搜索和准备播放期间显示思考表情；播放就绪后切到歌词页。搜索失败日志记录 CLI 退出码、超时和接口状态，便于区分登录失效与请求失败。
 

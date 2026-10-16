@@ -1,0 +1,7 @@
+builtin_interfaces/Time timestamp
+string ssid
+string password
+---
+bool success
+string error
+bool auto_reconnect_enabled

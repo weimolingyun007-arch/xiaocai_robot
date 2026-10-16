@@ -63,7 +63,7 @@ fi
 
 export XIAOCAI_INTERFACE_PREFIX="$interface_prefix"
 
-modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node)
+modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node wifi_manager ble_manager display_node)
 total_modules="${#modules[@]}"
 completed_modules=0
 log_file="$(mktemp "${TMPDIR:-/tmp}/xiaocai-build.XXXXXX")"

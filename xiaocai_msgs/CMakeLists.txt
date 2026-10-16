@@ -22,7 +22,21 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MusicState.msg"
   "msg/MusicLyrics.msg"
   "msg/MusicLogin.msg"
+  "msg/WifiStatus.msg"
+  "msg/BleStatus.msg"
+  "msg/BleScanResult.msg"
+  "msg/BleScanList.msg"
+  "msg/BleReceived.msg"
   "srv/GetVolume.srv"
+  "srv/GetWifiList.srv"
+  "srv/ConnectWifi.srv"
+  "srv/GetWifiStatus.srv"
+  "srv/ScanBle.srv"
+  "srv/ConnectBle.srv"
+  "srv/DisconnectBle.srv"
+  "srv/SendBleData.srv"
+  "srv/SetBleNotification.srv"
+  "srv/GetBleStatus.srv"
   DEPENDENCIES builtin_interfaces
 )
 

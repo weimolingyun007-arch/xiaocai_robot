@@ -1,0 +1,13 @@
+builtin_interfaces/Time timestamp
+bool available
+bool link_up
+bool connected
+string ipv4_address
+bool signal_known
+uint8 strength
+bool speed_known
+float64 download_bytes_per_second
+float64 upload_bytes_per_second
+bool auto_reconnect_enabled
+bool reconnecting
+string reconnect_state

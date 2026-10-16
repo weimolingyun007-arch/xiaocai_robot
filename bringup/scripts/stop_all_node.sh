@@ -11,7 +11,7 @@ for proc_dir in /proc/[0-9]*; do
   pid=${proc_dir##*/}
   exe=$(readlink "$proc_dir/exe" 2>/dev/null || true)
   [ -n "$exe" ] || continue
-  for module in audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node; do
+  for module in audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node wifi_manager ble_manager display_node; do
     case "$exe" in
       *"/bin/$module"|*"/$module/bin/$module"*|*"/build/$module/$module"*)
         if kill -TERM "$pid" 2>/dev/null; then pids+=("$pid"); fi

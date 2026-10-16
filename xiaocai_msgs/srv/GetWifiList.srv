@@ -1,0 +1,8 @@
+builtin_interfaces/Time timestamp
+bool rescan
+---
+bool success
+string error
+string[] ssids
+uint8[] signal_percent
+bool[] secured

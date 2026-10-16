@@ -1,0 +1,4 @@
+builtin_interfaces/Time timestamp
+string address
+string characteristic_uuid
+uint8[] data

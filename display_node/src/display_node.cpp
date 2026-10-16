@@ -21,8 +21,7 @@ DisplayNode::DisplayNode()
           display_config_.AssetDirectory(),
           display_config_.Settings().font_family)),
       robot_state_(common::RobotState::Idle), lyrics_presenter_(),
-      wifi_status_reader_(display_config_.Settings().wifi_interface),
-      last_wifi_update_(0.0), last_clock_update_(0.0) {
+      last_clock_update_(0.0) {
   ShowRobotState(robot_state_);
   InitPublishers();
   InitSubscribers();
@@ -79,6 +78,18 @@ void DisplayNode::InitSubscribers() {
         OnVolumeStateCallback(*message);
       });
   ++initialized_count;
+  wifi_status_subscriber_ = create_subscription<xiaocai_msgs::msg::WifiStatus>(
+      "/xiaocai_robot/wifi/status", rclcpp::QoS(1).transient_local(),
+      [this](xiaocai_msgs::msg::WifiStatus::SharedPtr message) {
+        OnWifiStatusCallback(*message);
+      });
+  ++initialized_count;
+  ble_status_subscriber_ = create_subscription<xiaocai_msgs::msg::BleStatus>(
+      "/xiaocai_robot/ble/status", rclcpp::QoS(1).transient_local(),
+      [this](xiaocai_msgs::msg::BleStatus::SharedPtr message) {
+        OnBleStatusCallback(*message);
+      });
+  ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
@@ -90,6 +101,16 @@ void DisplayNode::InitClients() {
 void DisplayNode::OnVolumeStateCallback(const std_msgs::msg::Int32 &message) {
   if (message.data >= 0 && message.data <= 150)
     display_window_->ShowVolume(message.data);
+}
+
+void DisplayNode::OnWifiStatusCallback(
+    const xiaocai_msgs::msg::WifiStatus &message) {
+  display_window_->ShowWifiStatus(message);
+}
+
+void DisplayNode::OnBleStatusCallback(
+    const xiaocai_msgs::msg::BleStatus &message) {
+  display_window_->ShowBleStatus(message);
 }
 
 void DisplayNode::PublishMusicCommand(common::MusicAction action) {
@@ -219,10 +240,6 @@ void DisplayNode::RefreshDisplay() {
 void DisplayNode::ProcessDisplayEvents() {
   const double now = SteadySeconds();
   RefreshVolume(now);
-  if (now - last_wifi_update_ >= 1.0) {
-    display_window_->ShowWifiStatus(wifi_status_reader_.Read());
-    last_wifi_update_ = now;
-  }
   if (now - last_clock_update_ >= 1.0) {
     display_window_->RefreshClock();
     last_clock_update_ = now;

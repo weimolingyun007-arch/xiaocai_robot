@@ -30,7 +30,7 @@ for expression in idle listening thinking speaking quiet muted; do
     "$payload/resource/display/$expression.ppm"
 done
 
-modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node)
+modules=(audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node wifi_manager ble_manager display_node)
 for module in "${modules[@]}"; do
   install -D -m 0644 "$workspace/$module/config/biz_config.toml" "$payload/config/$module/biz_config.toml"
 done
@@ -132,7 +132,7 @@ gzip -t "$temp_archive"
 
 if ! tar -tzf "$temp_archive" | awk '
 BEGIN {
-  split("audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node display_node", names, " ")
+  split("audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node wifi_manager ble_manager display_node", names, " ")
   for (i in names) node[names[i]]=1
 }
 {

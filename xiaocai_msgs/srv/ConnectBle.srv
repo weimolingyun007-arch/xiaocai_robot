@@ -1,0 +1,6 @@
+builtin_interfaces/Time timestamp
+string address
+---
+bool success
+string name
+string error

@@ -1,0 +1,22 @@
+{
+  "labels": [
+    {"name": "chat", "route": "ChatIntent"},
+    {"name": "music_play", "route": "MusicIntent:Play"},
+    {"name": "music_pause", "route": "MusicIntent:Pause"},
+    {"name": "music_resume", "route": "MusicIntent:Resume"},
+    {"name": "music_stop", "route": "MusicIntent:Stop"},
+    {"name": "music_next", "route": "MusicIntent:Next"},
+    {"name": "music_previous", "route": "MusicIntent:Previous"},
+    {"name": "volume_get", "route": "DialogueIntent:VolumeGet"},
+    {"name": "volume_set", "route": "VolumeIntent:Set"},
+    {"name": "volume_up", "route": "VolumeIntent:Up"},
+    {"name": "volume_down", "route": "VolumeIntent:Down"},
+    {"name": "quiet_off", "route": "DialogueIntent:QuietOff"},
+    {"name": "quiet_on", "route": "DialogueIntent:QuietOn"},
+    {"name": "memory_list", "route": "MemoryIntent:ListFacts"},
+    {"name": "memory_forget", "route": "MemoryIntent:ForgetFact"},
+    {"name": "memory_save", "route": "MemoryIntent:SaveFact"},
+    {"name": "reminder_create", "route": "MemoryIntent:AddReminder"},
+    {"name": "reminder_clarify", "route": "DialogueIntent:ReminderClarify"}
+  ]
+}

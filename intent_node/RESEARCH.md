@@ -56,6 +56,12 @@
 - 在 ASR/TTS 同时运行的真实板端负载下测 p50/p95 延迟、峰值 RSS 和 CPU 占用。初期目标为新增 RSS 不超过 100 MiB、意图阶段 p95 不超过 200 ms；这是验收目标，不是测量结果。
 - 依据验证集选择评分阈值和前两类别分差；不能直接使用固定相似度 0.8 或分类评分 0.9 就声称可靠。
 
+## 训练流程落地状态（2026-10-16）
+
+已按意图分类方向建立 `intent_node/training/`：使用 `hfl/rbt3`，按现有 `IntentResult` 业务分支维护标签映射，提供微调、评估、ONNX 导出及 INT8 动态量化脚本。种子语料目前每类 20 条（14 train、3 validation、3 test），均为人工示例，尚未加入板端 ASR 的真实转写；此测试规模仅用于检查训练流程，不能作为上线准确率结论。闹钟能力尚不存在，绝对时间闹钟表达暂归入提醒澄清类。
+
+当前执行节点仍使用 `IntentRules`，未接入模型。工作区环境没有 PyTorch、Transformers、ONNX Python 包或模型权重；仓库也只有 ONNX Runtime 动态库，没有对应 C++ 开发头文件或 tokenizer 实现。因此本次落地是可复现训练材料和语料，尚未产出可部署权重或更改 ROS 运行行为。下一阶段需在有训练依赖的开发机运行训练、加入真实转写并扩充评估集，再完成 C++ ONNX/tokenizer 接入和 RK3566 实测。
+
 ## 官方资料
 
 - fastText 监督分类、C++ 构建和标注数据：[教程](https://fasttext.cc/docs/en/supervised-tutorial.html)。模型压缩和 CPU 推理：[FAQ](https://fasttext.cc/docs/en/faqs.html)。

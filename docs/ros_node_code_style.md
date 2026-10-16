@@ -146,7 +146,7 @@ retention_days = 7
 ## ROS 接口与构建
 
 - 项目机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。
-- `xiaocai_msgs` 中每个 `.msg` 的第一个字段必须是 `builtin_interfaces/Time timestamp`。消息发布者在发布时用本节点 ROS 时钟填写 `timestamp`（`now().to_msg()`），不得留默认零值。
+- `xiaocai_msgs` 中每个 `.msg` 的第一个字段必须是 `builtin_interfaces/Time timestamp`，周期状态快照 `BleStatus` 除外。消息发布者在发布时用本节点 ROS 时钟填写 `timestamp`（`now().to_msg()`），不得留默认零值。
 - 每个 `.srv` 请求部分（`---` 之前）的第一个字段必须是 `builtin_interfaces/Time timestamp`。客户端发送请求时用本节点 ROS 时钟填写；响应字段按业务需要定义，不受该请求字段顺序要求影响。
 - 意图、状态和操作等跨节点枚举统一定义在 `common/include/defination/` 的 C++ `enum class` 中。`.msg` 仅用基础整数类型承载枚举值；新增或调整枚举时同步检查所有生产者、消费者和接口文档。
 - ROS 命令消息按业务域拆分，避免用一个通用消息携带互不相关的可选字段。`Intent.msg` 只承载对话分流意图和原始文本；音乐、音量调节、记忆及提醒操作分别使用 `MusicCommand.msg`、`VolumeCommand.msg` 和 `MemoryCommand.msg`。`IntentType` 只表示仍由对话节点处理的闲聊、音量查询、免打扰开关和提醒澄清；其余操作由各自消息对应的 `MusicAction`、`VolumeAction` 或 `MemoryOperation` 表达。这些枚举统一放在 `common/include/defination/`，不在 `.msg` 中声明枚举常量。

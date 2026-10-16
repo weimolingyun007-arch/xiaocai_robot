@@ -1,4 +1,5 @@
 #include "display_node/display_window.hpp"
+#include "defination/ble_status.hpp"
 #include "qrcodegen-1.8.0/qrcodegen.hpp"
 
 #include <X11/Xft/Xft.h>
@@ -195,7 +196,8 @@ struct DisplayWindow::State {
   std::string active_image;
   bool music_mode;
   std::string music_signature;
-  WifiStatus wifi_status;
+  xiaocai_msgs::msg::WifiStatus wifi_status;
+  xiaocai_msgs::msg::BleStatus ble_status;
   bool login_required;
   bool login_loading;
   std::string login_url;
@@ -288,11 +290,9 @@ void DisplayWindow::State::DrawStatusBar() {
                 " \xE2\x86\x91" +
                 FormatRate(wifi_status.upload_bytes_per_second)
           : "\xE2\x86\x93-- \xE2\x86\x91--";
-  const int speed_x = 724 - TextWidth(speed_text, 0);
+  const int speed_x = 712 - TextWidth(speed_text, 0);
   DrawText(speed_text, 0, 2, speed_x, 27);
 
-  XSetForeground(display, graphics_context, BlackPixel(display, screen));
-  XFillRectangle(display, buffer, graphics_context, 734, 7, 44, 33);
   XSetLineAttributes(display, graphics_context, 2, LineSolid, CapRound,
                      JoinRound);
   for (int ring = 1; ring <= 3; ++ring) {
@@ -300,16 +300,31 @@ void DisplayWindow::State::DrawStatusBar() {
                      wifi_status.strength > ring;
     XSetForeground(display, graphics_context, colors[lit ? 3 : 1].pixel);
     const int radius = 5 + ring * 5;
-    XDrawArc(display, buffer, graphics_context, 756 - radius, 32 - radius,
+    XDrawArc(display, buffer, graphics_context, 744 - radius, 32 - radius,
              radius * 2, radius * 2, 45 * 64, 90 * 64);
   }
   XSetForeground(display, graphics_context,
                  colors[wifi_status.connected ? 3 : 1].pixel);
-  XFillArc(display, buffer, graphics_context, 753, 29, 6, 6, 0, 360 * 64);
+  XFillArc(display, buffer, graphics_context, 741, 29, 6, 6, 0, 360 * 64);
   if (!wifi_status.connected) {
     XSetForeground(display, graphics_context, colors[2].pixel);
-    XDrawLine(display, buffer, graphics_context, 742, 12, 770, 37);
+    XDrawLine(display, buffer, graphics_context, 730, 12, 758, 37);
   }
+
+  const bool bluetooth_connected =
+      ble_status.state ==
+      static_cast<std::uint8_t>(common::BleStatusState::Connected);
+  const auto bluetooth_color = colors[bluetooth_connected ? 3 : 1].pixel;
+  XSetForeground(display, graphics_context, bluetooth_color);
+  XDrawLine(display, buffer, graphics_context, 780, 8, 780, 35);
+  XDrawLine(display, buffer, graphics_context, 780, 8, 789, 15);
+  XDrawLine(display, buffer, graphics_context, 789, 15, 780, 22);
+  XDrawLine(display, buffer, graphics_context, 780, 22, 789, 29);
+  XDrawLine(display, buffer, graphics_context, 789, 29, 780, 35);
+  XDrawLine(display, buffer, graphics_context, 773, 14, 787, 28);
+  XDrawLine(display, buffer, graphics_context, 773, 28, 787, 14);
+  if (bluetooth_connected)
+    XFillArc(display, buffer, graphics_context, 791, 32, 4, 4, 0, 360 * 64);
   XSetLineAttributes(display, graphics_context, 1, LineSolid, CapButt,
                      JoinMiter);
 }
@@ -637,17 +652,32 @@ bool DisplayWindow::IsVolumeOverlayActive() const {
   return state_->music_mode && state_->volume_visible;
 }
 
-void DisplayWindow::ShowWifiStatus(const WifiStatus &status) {
+void DisplayWindow::ShowWifiStatus(
+    const xiaocai_msgs::msg::WifiStatus &status) {
   const auto &old = state_->wifi_status;
   if (old.available == status.available && old.link_up == status.link_up &&
       old.connected == status.connected &&
+      old.ipv4_address == status.ipv4_address &&
       old.signal_known == status.signal_known &&
       old.strength == status.strength &&
       old.speed_known == status.speed_known &&
       old.download_bytes_per_second == status.download_bytes_per_second &&
-      old.upload_bytes_per_second == status.upload_bytes_per_second)
+      old.upload_bytes_per_second == status.upload_bytes_per_second &&
+      old.auto_reconnect_enabled == status.auto_reconnect_enabled &&
+      old.reconnecting == status.reconnecting &&
+      old.reconnect_state == status.reconnect_state)
     return;
   state_->wifi_status = status;
+  state_->Present();
+}
+
+void DisplayWindow::ShowBleStatus(const xiaocai_msgs::msg::BleStatus &status) {
+  const auto &old = state_->ble_status;
+  if (old.state == status.state &&
+      old.connected_address == status.connected_address &&
+      old.connected_name == status.connected_name)
+    return;
+  state_->ble_status = status;
   state_->Present();
 }
 

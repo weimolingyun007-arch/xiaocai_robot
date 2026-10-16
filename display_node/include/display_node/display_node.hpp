@@ -5,13 +5,14 @@
 #include "display_node/display_config.hpp"
 #include "display_node/display_window.hpp"
 #include "display_node/lyrics_presenter.hpp"
-#include "display_node/wifi_status_reader.hpp"
+#include "xiaocai_msgs/msg/ble_status.hpp"
 #include "xiaocai_msgs/msg/music_command.hpp"
 #include "xiaocai_msgs/msg/music_login.hpp"
 #include "xiaocai_msgs/msg/music_lyrics.hpp"
 #include "xiaocai_msgs/msg/music_state.hpp"
 #include "xiaocai_msgs/msg/robot_state.hpp"
 #include "xiaocai_msgs/msg/volume_command.hpp"
+#include "xiaocai_msgs/msg/wifi_status.hpp"
 #include "xiaocai_msgs/srv/get_volume.hpp"
 #include <std_msgs/msg/int32.hpp>
 
@@ -37,6 +38,8 @@ private:
   void OnMusicLyricsCallback(const xiaocai_msgs::msg::MusicLyrics &message);
   void OnMusicLoginCallback(const xiaocai_msgs::msg::MusicLogin &message);
   void OnVolumeStateCallback(const std_msgs::msg::Int32 &message);
+  void OnWifiStatusCallback(const xiaocai_msgs::msg::WifiStatus &message);
+  void OnBleStatusCallback(const xiaocai_msgs::msg::BleStatus &message);
   void PublishMusicCommand(common::MusicAction action);
   void PublishVolumeCommand(int percent);
   void RefreshVolume(double now);
@@ -51,8 +54,6 @@ private:
   std::unique_ptr<DisplayWindow> display_window_;
   common::RobotState robot_state_;
   LyricsPresenter lyrics_presenter_;
-  WifiStatusReader wifi_status_reader_;
-  double last_wifi_update_;
   double last_clock_update_;
   double last_volume_query_{-5.0};
   bool volume_query_pending_{false};
@@ -71,6 +72,10 @@ private:
       music_lyrics_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::MusicLogin>::SharedPtr
       login_subscriber_;
+  rclcpp::Subscription<xiaocai_msgs::msg::WifiStatus>::SharedPtr
+      wifi_status_subscriber_;
+  rclcpp::Subscription<xiaocai_msgs::msg::BleStatus>::SharedPtr
+      ble_status_subscriber_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 

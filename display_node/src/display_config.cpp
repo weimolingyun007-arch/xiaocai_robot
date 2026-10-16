@@ -15,9 +15,6 @@ DisplayConfig::DisplayConfig() : NodeConfigBase("display_node") {
   if (auto value = (*section)["font_family"].value<std::string>();
       value && !value->empty())
     settings_.font_family = *value;
-  if (auto value = (*section)["wifi_interface"].value<std::string>();
-      value && !value->empty())
-    settings_.wifi_interface = *value;
 }
 
 std::filesystem::path DisplayConfig::AssetDirectory() const {
