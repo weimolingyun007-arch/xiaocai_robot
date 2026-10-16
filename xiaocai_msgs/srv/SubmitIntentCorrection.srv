@@ -1,0 +1,14 @@
+# Timestamp of the correction utterance.
+builtin_interfaces/Time timestamp
+# The original utterance that received the wrong intent label.
+string text
+# Exact user utterance used to correct the classification.
+string correction_text
+string predicted_label
+string corrected_label
+# Confidence of the original model prediction, from 0.0 to 1.0.
+float32 predicted_score
+---
+bool accepted
+int64 sample_id
+string error

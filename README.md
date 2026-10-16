@@ -29,7 +29,7 @@
 
 ### 节点职责与配置
 
-ROS 节点类负责 ROS 通信和生命周期，将复杂业务交给专用组件处理：`speech_input_node` 使用 `SpeechInputController` 管理唤醒、录音和识别流程；`intent_node` 使用 `IntentRules` 解析本地指令；`dialogue_node` 使用 `DialogueController` 管理对话和模型工具调用；`music_node` 使用 `MusicController` 执行音乐任务；`memory_node` 使用 `MemoryManager` 管理 SQLite 记忆和提醒。各节点的配置解析由对应的配置类完成，共享的 `NodeConfigBase` 负责 TOML 文件定位和日志配置读取。
+ROS 节点类负责 ROS 通信和生命周期，将复杂业务交给专用组件处理：`speech_input_node` 使用 `SpeechInputController` 管理唤醒、录音和识别流程；`intent_node` 使用本地训练的 `IntentClassifier` 模型分类意图和用户纠偏表达；`dialogue_node` 使用 `DialogueController` 管理对话和模型工具调用；`music_node` 使用 `MusicController` 执行音乐任务；`memory_node` 使用 `MemoryManager` 管理 SQLite 记忆和提醒。各节点的配置解析由对应的配置类完成，共享的 `NodeConfigBase` 负责 TOML 文件定位和日志配置读取。
 
 每个节点的业务配置位于 `<node_package>/config/biz_config.toml`。运行包会将它们放在 `config/<node_package>/biz_config.toml`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 指向这个配置根目录；未设置该变量时，节点从 ROS 安装的包共享目录读取配置。日志使用 spdlog，由 `common` 中的 `LogManager` 管理。默认写入 `/userdata/log/<node_name>`，单文件上限 20 MB，每天最多 3 个日志文件，保留 7 天；具体值可在节点配置的 `[logging]` 表中调整。
 
@@ -80,7 +80,7 @@ bash bringup/scripts/start_all_node.sh
 ]}
 ```
 
-板端查询后逐条回传结果，比如 `{"ok":true,"percent":120}`，模型再结合实测时间和音量回答。简单音量、音乐、记忆和提醒命令仍通过本地规则直接执行；带“顺便、并且、然后”等的组合请求交给模型，避免只执行其中一项。目前没有实时天气查询工具。
+板端查询后逐条回传结果，比如 `{"ok":true,"percent":120}`，模型再结合实测时间和音量回答。简单音量、音乐、记忆和提醒命令由本地训练的意图模型分类后直接执行；组合请求交给对话模型处理，避免只执行其中一项。目前没有实时天气查询工具。
 
 HTTP 和工具等待使用独立工作线程，ROS 主线程继续处理服务反馈。“闭嘴”和新的唤醒会取消旧的云端任务；一次请求后的自动休眠不会取消该任务。最多 4 轮工具执行、8 次工具调用；对参数和工具名称进行本地校验，不提供任意 shell 工具。同一 `tool_call_id` 不会重复执行。超时可能已经产生效果的修改操作不会由程序自动重试。
 
@@ -98,7 +98,7 @@ make ota
 make deploy
 ```
 
-`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。十个可执行文件集中在 `bin/`；十个节点的 `biz_config.toml` 放在 `config/<节点名>/`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 加载；语音模型和唤醒提示音放在 `resource/speech/`、语音合成模型放在 `resource/tts/`、六种表情素材放在 `resource/display/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。`bringup/` 包含启停脚本和 systemd 服务单元。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
+`make build` 编译节点。`make ota` 只打包现有编译产物，不会触发编译；它在工程根目录生成 `xiaocai_robot_时间.tar.gz`。压缩包根目录为 `xiaocai_robot/`，其下有 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。十个可执行文件集中在 `bin/`；十个节点的 `biz_config.toml` 放在 `config/<节点名>/`，启动脚本通过 `XIAOCAI_CONFIG_ROOT` 加载；语音模型和唤醒提示音放在 `resource/speech/`、语音合成模型放在 `resource/tts/`、意图分类模型放在 `resource/intent/`、六种表情素材放在 `resource/display/`；第三方依赖库放在 `thirdparty/`；自定义消息与服务生成的 ROS 2 类型支持库放在 `msgs/`。`bringup/` 包含启停脚本和 systemd 服务单元。接口定义保留在工程源码 `xiaocai_msgs/msg/` 和 `xiaocai_msgs/srv/`，生成的 C++ 头文件在 `build/install/include/`；这些内容不随运行包部署。压缩包不含节点源码、头文件或构建配置。打包校验成功后会删除旧压缩包，只保留最新包。
 
 `make deploy` 调用 ADB 部署脚本，将最新压缩包传到板端 `/home/lckfb/xiaocai_robot`，替换整个运行目录并重启服务；它不会重新编译或打包。板端运行目录包含 `bin/`、`config/`、`resource/`、`bringup/`、`thirdparty/` 和 `msgs/`。
 
@@ -180,7 +180,7 @@ sudo bash bringup/ota/install_autostart.sh
 
 `wifi_manager` 通过 NetworkManager 扫描网络、连接指定 SSID，并为保存的网络开启自动重连；断线时也会定期尝试恢复连接。`/xiaocai_robot/wifi/get_list` 返回网络名称、信号百分比和是否加密，`/xiaocai_robot/wifi/connect` 负责连接，`/xiaocai_robot/wifi/get_status` 查询状态。Wi-Fi 密码通过服务请求的标准输入传给 `nmcli`，不会写入节点日志。节点每秒发布 `/xiaocai_robot/wifi/status`，包含连接状态、信号强度、IP 地址和上下行速率。
 
-`ble_manager` 通过板端 BlueZ 的 `bluetoothctl` 管理 BLE：`/xiaocai_robot/ble/scan` 扫描附近设备并返回 `BleScanList`，列表项 `BleScanResult` 含地址、名称和可选 RSSI；`/xiaocai_robot/ble/connect` 按地址请求连接，`/xiaocai_robot/ble/disconnect` 断开连接。主动向设备发送数据使用 `/xiaocai_robot/ble/send` 服务，将字节写入指定 GATT 特征并返回操作结果；设备异步通知或返回的数据发布到 `/xiaocai_robot/ble/received` 话题。`/xiaocai_robot/ble/notify` 服务开关特征通知。`/xiaocai_robot/ble/get_status` 可查询状态，节点每两秒发布 `/xiaocai_robot/ble/status`。`BleStatus.state` 由 `common/include/defination/ble_status.hpp` 定义：`0 Disconnected` 表示没有连接或扫描（适配器不可用、关闭或空闲也归此值），`1 Scanning` 表示扫描中，`2 Connected` 表示已有设备连接；扫描与连接同时发生时优先报告 `Connected`。状态不携带采样时间；连接地址和名称只在 `Connected` 状态下有效。扫描时长为 1–30 秒。GATT 特征参数可传 UUID 或 BlueZ 显示的属性句柄。板端需运行 BlueZ 服务并提供 `bluetoothctl`。显示节点将蓝牙图标放在状态栏最右侧，Wi-Fi 图标紧邻其左侧。
+`ble_manager` 通过板端 BlueZ 的 `bluetoothctl` 管理 BLE：`/xiaocai_robot/ble/scan` 扫描附近设备并返回 `BleScanList`，列表项 `BleScanResult` 含地址、名称和可选 RSSI；`/xiaocai_robot/ble/connect` 服务按设备地址连接外设。主动向设备发送数据使用 `/xiaocai_robot/ble/send` 服务，将字节写入指定 GATT 特征并返回操作结果；外设异步通知的数据发布到 `/xiaocai_robot/ble/received` 话题。`/xiaocai_robot/ble/notify` 服务开关特征通知。`/xiaocai_robot/ble/get_status` 可查询状态，节点每两秒发布 `/xiaocai_robot/ble/status`。`BleStatus.state` 由 `common/include/defination/ble_status.hpp` 定义：`0 Disconnected` 表示没有连接或扫描（适配器不可用、关闭或空闲也归此值），`1 Scanning` 表示扫描中，`2 Connected` 表示已有设备连接；扫描与连接同时发生时优先报告 `Connected`。状态不携带采样时间；连接地址和名称只在 `Connected` 状态下有效。扫描时长为 1–30 秒。GATT 特征参数可传 UUID 或 BlueZ 显示的属性句柄。当前后端由板端主动连接 BLE 外设并接收其通知；App 主动连接板端并写入消息需要本地 GATT 服务端能力，目前尚未实现。板端需运行 BlueZ 服务并提供 `bluetoothctl`。显示节点将蓝牙图标放在状态栏最右侧，Wi-Fi 图标紧邻其左侧。
 
 `display_node` 订阅 Wi-Fi 和蓝牙状态消息，顶部状态栏在表情、歌词和登录页面都显示左侧系统日期和时间（`YYYY-MM-DD  HH:MM`，日期与时间之间两个空格），右侧显示 Wi-Fi 下行/上行速率和连接图标。速率按 B/s、K/s 或 M/s 显示；接口未连接或暂时无法读取计数时显示 `--`。连接后 Wi-Fi 图标按信号强弱点亮青色弧线，未连接或接口不可用时显示灰色图标和斜线。这个图标表示无线连接，不等于网易云接口必然可用。
 

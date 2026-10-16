@@ -528,13 +528,6 @@ BleManagerNode::BleManagerNode()
         HandleConnect(request, response);
       },
       rmw_qos_profile_services_default, service_callback_group_);
-  disconnect_service_ = create_service<xiaocai_msgs::srv::DisconnectBle>(
-      "/xiaocai_robot/ble/disconnect",
-      [this](const std::shared_ptr<xiaocai_msgs::srv::DisconnectBle::Request>
-                 request,
-             std::shared_ptr<xiaocai_msgs::srv::DisconnectBle::Response>
-                 response) { HandleDisconnect(request, response); },
-      rmw_qos_profile_services_default, service_callback_group_);
   send_service_ = create_service<xiaocai_msgs::srv::SendBleData>(
       "/xiaocai_robot/ble/send",
       [this](
@@ -710,34 +703,6 @@ void BleManagerNode::HandleConnect(
     connected_address_hint_ = request->address;
   if (!response->success)
     response->error = "The device did not report a connected state";
-  operation_lock.unlock();
-  PublishStatus();
-}
-
-void BleManagerNode::HandleDisconnect(
-    const std::shared_ptr<xiaocai_msgs::srv::DisconnectBle::Request> request,
-    std::shared_ptr<xiaocai_msgs::srv::DisconnectBle::Response> response) {
-  std::unique_lock<std::mutex> operation_lock(operation_mutex_);
-  if (!IsBluetoothAddress(request->address)) {
-    response->error = "Invalid Bluetooth address";
-    return;
-  }
-  const auto result = bluetooth_->Execute("disconnect " + request->address,
-                                          std::chrono::seconds(10));
-  const auto info =
-      bluetooth_->Execute("info " + request->address, std::chrono::seconds(4));
-  response->success = result.success &&
-                      (HasYesValue(info.output, "Connected") == false) &&
-                      !IsCommandFailure(result.output);
-  if (!response->success)
-    response->error = Trim(result.output);
-  if (response->success) {
-    if (connected_address_hint_ == request->address)
-      connected_address_hint_.clear();
-    std::lock_guard<std::mutex> status_lock(status_mutex_);
-    subscribed_address_.clear();
-    subscribed_uuid_.clear();
-  }
   operation_lock.unlock();
   PublishStatus();
 }

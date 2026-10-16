@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
-"""Fine-tune hfl/rbt3 for the intent_node label set."""
+"""Train the small character n-gram intent model using only Python's stdlib."""
 
 import argparse
+import hashlib
 import json
+import math
 import random
-import unicodedata
 from pathlib import Path
-
-import numpy as np
-from datasets import Dataset
-from sklearn.metrics import accuracy_score, f1_score
-from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-    DataCollatorWithPadding,
-    Trainer,
-    TrainingArguments,
-    set_seed,
-)
 
 
 SPLITS = {"train", "validation", "test"}
+FEATURE_DIMENSIONS = 8192
+MAX_NGRAM = 3
+EPOCHS = 120
+LEARNING_RATE = 0.18
+L2 = 0.0001
 
 
 def LoadLabels(path):
@@ -31,39 +25,75 @@ def LoadLabels(path):
     return labels
 
 
-def LoadRows(path, labels):
+def NormalizeText(text):
+    return "".join(character for character in text if not character.isspace())
+
+
+def FeatureIndex(ngram):
+    value = 2166136261
+    for byte in ngram.encode("utf-8"):
+        value ^= byte
+        value = (value * 16777619) & 0xFFFFFFFF
+    return value % FEATURE_DIMENSIONS
+
+
+def FeatureVector(text):
+    characters = list(NormalizeText(text))
+    padded = ["^", *characters, "$"]
+    counts = {}
+    for length in range(1, MAX_NGRAM + 1):
+        for start in range(len(padded) - length + 1):
+            index = FeatureIndex("".join(padded[start : start + length]))
+            counts[index] = counts.get(index, 0.0) + 1.0
+    norm = math.sqrt(sum(value * value for value in counts.values())) or 1.0
+    return [(index, value / norm) for index, value in counts.items()]
+
+
+def LoadRows(paths, labels):
     rows = []
-    with path.open(encoding="utf-8") as dataset_file:
-        for line_number, line in enumerate(dataset_file, start=1):
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            text = row.get("text", "").strip()
-            label = row.get("label")
-            split = row.get("split")
-            if not text:
-                raise ValueError(f"Empty text at {path}:{line_number}")
-            if label not in labels:
-                raise ValueError(f"Unknown label {label!r} at {path}:{line_number}")
-            if split not in SPLITS:
-                raise ValueError(
-                    f"split must be one of {sorted(SPLITS)} at {path}:{line_number}"
+    normalized_splits = {}
+    for path in paths:
+        with path.open(encoding="utf-8") as data_file:
+            for line_number, line in enumerate(data_file, start=1):
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                text = row.get("text", "").strip()
+                label = row.get("label")
+                split = row.get("split")
+                is_correction = row.get("is_correction", False)
+                if not text:
+                    raise ValueError(f"Empty text at {path}:{line_number}")
+                if label not in labels:
+                    raise ValueError(
+                        f"Unknown label {label!r} at {path}:{line_number}"
+                    )
+                if split not in SPLITS:
+                    raise ValueError(
+                        f"split must be one of {sorted(SPLITS)} at "
+                        f"{path}:{line_number}"
+                    )
+                if not isinstance(is_correction, bool):
+                    raise ValueError(
+                        f"is_correction must be a boolean at {path}:{line_number}"
+                    )
+                normalized = NormalizeText(text)
+                previous_split = normalized_splits.setdefault(normalized, split)
+                if previous_split != split:
+                    raise ValueError(
+                        f"Duplicate text crosses dataset splits: {text!r}"
+                    )
+                rows.append(
+                    {
+                        "text": text,
+                        "label": label,
+                        "split": split,
+                        "is_correction": is_correction,
+                    }
                 )
-            rows.append({"text": text, "label": label, "split": split})
 
     if not rows:
-        raise ValueError(f"No examples found in {path}")
-
-    normalized_splits = {}
-    for row in rows:
-        normalized = unicodedata.normalize("NFKC", row["text"])
-        normalized = "".join(normalized.split())
-        previous_split = normalized_splits.setdefault(normalized, row["split"])
-        if previous_split != row["split"]:
-            raise ValueError(
-                f"Duplicate text crosses dataset splits: {row['text']!r}"
-            )
-
+        raise ValueError("No examples found")
     for split in SPLITS:
         split_labels = {row["label"] for row in rows if row["split"] == split}
         missing = set(labels) - split_labels
@@ -72,119 +102,202 @@ def LoadRows(path, labels):
     return rows
 
 
-def BuildDataset(rows, split, label2id, tokenizer, max_length):
-    examples = [
-        {"text": row["text"], "labels": label2id[row["label"]]}
-        for row in rows
-        if row["split"] == split
+def Softmax(logits):
+    maximum = max(logits)
+    exp_values = [math.exp(value - maximum) for value in logits]
+    total = sum(exp_values)
+    return [value / total for value in exp_values]
+
+
+def TrainSoftmax(examples, class_names, seed, sample_weights=None):
+    rng = random.Random(seed)
+    weights = [[0.0] * (FEATURE_DIMENSIONS + 1) for _ in class_names]
+    class_ids = {name: index for index, name in enumerate(class_names)}
+    training = [
+        (FeatureVector(row["text"]), class_ids[row["target"]], row["weight"])
+        for row in examples
     ]
-    dataset = Dataset.from_list(examples)
-    return dataset.map(
-        lambda batch: tokenizer(
-            batch["text"], truncation=True, max_length=max_length
-        ),
-        batched=True,
+    total_steps = max(1, EPOCHS * len(training))
+    step = 0
+    for _ in range(EPOCHS):
+        rng.shuffle(training)
+        for features, target, row_weight in training:
+            logits = [
+                sum(weights[class_id][feature] * value for feature, value in features)
+                + weights[class_id][FEATURE_DIMENSIONS]
+                for class_id in range(len(class_names))
+            ]
+            probabilities = Softmax(logits)
+            learning_rate = LEARNING_RATE * (1.0 - 0.5 * step / total_steps)
+            for class_id, probability in enumerate(probabilities):
+                gradient = (probability - (1.0 if class_id == target else 0.0))
+                gradient *= row_weight
+                class_weights = weights[class_id]
+                for feature, value in features:
+                    old_weight = class_weights[feature]
+                    class_weights[feature] = old_weight - learning_rate * (
+                        gradient * value + L2 * old_weight
+                    )
+                class_weights[FEATURE_DIMENSIONS] -= learning_rate * gradient
+            step += 1
+    return weights
+
+
+def Predict(weights, text):
+    features = FeatureVector(text)
+    logits = [
+        sum(weights[class_id][feature] * value for feature, value in features)
+        + weights[class_id][FEATURE_DIMENSIONS]
+        for class_id in range(len(weights))
+    ]
+    return Softmax(logits)
+
+
+def Metrics(expected, predicted, labels):
+    confusion = {label: {candidate: 0 for candidate in labels} for label in labels}
+    for truth, guess in zip(expected, predicted):
+        confusion[truth][guess] += 1
+    accuracy = sum(truth == guess for truth, guess in zip(expected, predicted)) / max(
+        1, len(expected)
     )
+    f1_values = []
+    for label in labels:
+        true_positive = confusion[label][label]
+        false_positive = sum(confusion[other][label] for other in labels if other != label)
+        false_negative = sum(confusion[label][other] for other in labels if other != label)
+        precision = true_positive / max(1, true_positive + false_positive)
+        recall = true_positive / max(1, true_positive + false_negative)
+        f1_values.append(2 * precision * recall / max(1e-12, precision + recall))
+    return {
+        "accuracy": accuracy,
+        "macro_f1": sum(f1_values) / len(f1_values),
+        "confusion_matrix": confusion,
+    }
+
+
+def EvaluateIntent(rows, weights, labels, split):
+    selected = [row for row in rows if row["split"] == split]
+    expected = [row["label"] for row in selected]
+    predicted = [labels[max(range(len(labels)), key=lambda index: Predict(weights, row["text"])[index])]
+                 for row in selected]
+    return Metrics(expected, predicted, labels)
+
+
+def EvaluateCorrection(rows, weights, split):
+    selected = [row for row in rows if row["split"] == split]
+    expected = [row["is_correction"] for row in selected]
+    predicted = [Predict(weights, row["text"])[1] >= 0.65 for row in selected]
+    true_positive = sum(truth and guess for truth, guess in zip(expected, predicted))
+    false_positive = sum(not truth and guess for truth, guess in zip(expected, predicted))
+    false_negative = sum(truth and not guess for truth, guess in zip(expected, predicted))
+    precision = true_positive / max(1, true_positive + false_positive)
+    recall = true_positive / max(1, true_positive + false_negative)
+    return {
+        "threshold": 0.65,
+        "precision": precision,
+        "recall": recall,
+        "f1": 2 * precision * recall / max(1e-12, precision + recall),
+        "true_positive": true_positive,
+        "false_positive": false_positive,
+        "false_negative": false_negative,
+    }
 
 
 def Main():
+    script_dir = Path(__file__).parent
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--data",
-        type=Path,
-        default=Path(__file__).parent / "data" / "intent_examples.jsonl",
+        "--data", type=Path, default=script_dir / "data" / "intent_examples.jsonl"
     )
     parser.add_argument(
-        "--labels",
+        "--correction-data",
         type=Path,
-        default=Path(__file__).parent / "intent_labels.json",
+        default=script_dir / "data" / "intent_correction_examples.jsonl",
     )
-    parser.add_argument("--model-name", default="hfl/rbt3")
     parser.add_argument(
-        "--output-dir", type=Path, default=Path(__file__).parent / "output"
+        "--labels", type=Path, default=script_dir / "intent_labels.json"
     )
-    parser.add_argument("--epochs", type=float, default=8)
-    parser.add_argument("--learning-rate", type=float, default=2e-5)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--max-length", type=int, default=96)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=script_dir.parent / "assets" / "intent_model.json",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     labels = LoadLabels(args.labels)
-    rows = LoadRows(args.data, labels)
-    label2id = {label: index for index, label in enumerate(labels)}
-    id2label = {index: label for label, index in label2id.items()}
-    set_seed(args.seed)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        args.model_name,
-        num_labels=len(labels),
-        label2id=label2id,
-        id2label=id2label,
-    )
-
-    train_dataset = BuildDataset(
-        rows, "train", label2id, tokenizer, args.max_length
-    )
-    validation_dataset = BuildDataset(
-        rows, "validation", label2id, tokenizer, args.max_length
-    )
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-
-    def ComputeMetrics(evaluation):
-        logits, targets = evaluation
-        predictions = np.argmax(logits, axis=1)
-        return {
-            "accuracy": accuracy_score(targets, predictions),
-            "macro_f1": f1_score(
-                targets,
-                predictions,
-                labels=list(range(len(labels))),
-                average="macro",
-                zero_division=0,
-            ),
+    rows = LoadRows([args.data, args.correction_data], labels)
+    intent_training = [
+        {"text": row["text"], "target": row["label"], "weight": 1.0}
+        for row in rows
+        if row["split"] == "train"
+    ]
+    correction_training = [
+        {
+            "text": row["text"],
+            "target": "correction" if row["is_correction"] else "normal",
+            "weight": 1.0,
         }
+        for row in rows
+        if row["split"] == "train"
+    ]
+    correction_counts = {
+        name: sum(row["target"] == name for row in correction_training)
+        for name in ("normal", "correction")
+    }
+    for row in correction_training:
+        row["weight"] = len(correction_training) / (
+            2 * correction_counts[row["target"]]
+        )
 
-    training_args = TrainingArguments(
-        output_dir=str(args.output_dir / "checkpoints"),
-        learning_rate=args.learning_rate,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        num_train_epochs=args.epochs,
-        weight_decay=0.01,
-        warmup_ratio=0.1,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=2,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_macro_f1",
-        greater_is_better=True,
-        logging_strategy="epoch",
-        report_to="none",
-        seed=args.seed,
+    intent_weights = TrainSoftmax(intent_training, labels, args.seed)
+    correction_weights = TrainSoftmax(
+        correction_training, ["normal", "correction"], args.seed + 1
     )
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=validation_dataset,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=ComputeMetrics,
+    payload = {
+        "version": 1,
+        "algorithm": "hashed_character_ngram_softmax",
+        "feature_dimensions": FEATURE_DIMENSIONS,
+        "max_ngram": MAX_NGRAM,
+        "normalization": "remove_whitespace_l2",
+        "labels": labels,
+        "intent_weights": intent_weights,
+        "correction_labels": ["normal", "correction"],
+        "correction_weights": correction_weights,
+        "correction_threshold": 0.65,
+        "confidence_threshold": 0.25,
+        "training": {
+            "seed": args.seed,
+            "epochs": EPOCHS,
+            "source_examples": {
+                "intent": len([row for row in rows if row["split"] == "train"]),
+                "correction_positive": sum(
+                    row["split"] == "train" and row["is_correction"] for row in rows
+                ),
+            },
+        },
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+        encoding="utf-8",
     )
-    trainer.train()
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    trainer.save_model(str(args.output_dir))
-    tokenizer.save_pretrained(str(args.output_dir))
-    (args.output_dir / "intent_labels.json").write_text(
-        args.labels.read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    print(f"Saved best validation checkpoint to {args.output_dir}")
-    print("Run evaluate_intent_classifier.py on the held-out test split before use.")
+    for split in ("validation", "test"):
+        intent_metrics = EvaluateIntent(rows, intent_weights, labels, split)
+        correction_metrics = EvaluateCorrection(rows, correction_weights, split)
+        print(
+            json.dumps(
+                {
+                    "split": split,
+                    "intent_accuracy": intent_metrics["accuracy"],
+                    "intent_macro_f1": intent_metrics["macro_f1"],
+                    "correction": correction_metrics,
+                },
+                ensure_ascii=False,
+            )
+        )
+    print(f"Wrote model: {args.output}")
 
 
 if __name__ == "__main__":

@@ -1,101 +1,68 @@
 #!/usr/bin/env python3
-"""Report per-intent quality and review low-confidence held-out examples."""
+"""Evaluate the trained lightweight intent and correction classifiers."""
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-import numpy as np
-import torch
-from sklearn.metrics import classification_report, confusion_matrix
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-from train_intent_classifier import LoadLabels, LoadRows
+from train_intent_classifier import (
+    EvaluateCorrection,
+    EvaluateIntent,
+    LoadLabels,
+    LoadRows,
+)
 
 
 def Main():
+    script_dir = Path(__file__).parent
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--data",
+        "--data", type=Path, default=script_dir / "data" / "intent_examples.jsonl"
+    )
+    parser.add_argument(
+        "--correction-data",
         type=Path,
-        default=Path(__file__).parent / "data" / "intent_examples.jsonl",
+        default=script_dir / "data" / "intent_correction_examples.jsonl",
     )
     parser.add_argument(
-        "--labels", type=Path, default=Path(__file__).parent / "intent_labels.json"
+        "--labels", type=Path, default=script_dir / "intent_labels.json"
     )
     parser.add_argument(
-        "--model-dir", type=Path, default=Path(__file__).parent / "output"
+        "--model", type=Path, default=script_dir.parent / "assets" / "intent_model.json"
     )
-    parser.add_argument("--split", choices=("validation", "test"), default="test")
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--max-length", type=int, default=96)
-    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--split", choices=("validation", "test"), default="test"
+    )
     args = parser.parse_args()
 
+    if not args.model.is_file():
+        print(f"Model not found: {args.model}", file=sys.stderr)
+        return 1
+    model = json.loads(args.model.read_text(encoding="utf-8"))
     labels = LoadLabels(args.labels)
-    rows = [row for row in LoadRows(args.data, labels) if row["split"] == args.split]
-    label2id = {label: index for index, label in enumerate(labels)}
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
-    model = AutoModelForSequenceClassification.from_pretrained(args.model_dir)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.eval()
-
-    predictions = []
-    for offset in range(0, len(rows), args.batch_size):
-        batch_rows = rows[offset : offset + args.batch_size]
-        inputs = tokenizer(
-            [row["text"] for row in batch_rows],
-            padding=True,
-            truncation=True,
-            max_length=args.max_length,
-            return_tensors="pt",
-        ).to(device)
-        with torch.inference_mode():
-            probabilities = model(**inputs).logits.softmax(dim=-1).cpu().numpy()
-        predictions.extend(probabilities)
-
-    probabilities = np.asarray(predictions)
-    predicted_ids = probabilities.argmax(axis=1)
-    true_ids = np.asarray([label2id[row["label"]] for row in rows])
-    report = classification_report(
-        true_ids,
-        predicted_ids,
-        labels=list(range(len(labels))),
-        target_names=labels,
-        output_dict=True,
-        zero_division=0,
+    rows = LoadRows([args.data, args.correction_data], labels)
+    intent_metrics = EvaluateIntent(
+        rows, model["intent_weights"], labels, args.split
     )
-    matrix = confusion_matrix(
-        true_ids, predicted_ids, labels=list(range(len(labels)))
-    ).tolist()
-    details = {
-        "split": args.split,
-        "sample_count": len(rows),
-        "labels": labels,
-        "classification_report": report,
-        "confusion_matrix": matrix,
-        "confusion_matrix_label_order": labels,
-        "predictions": [
+    correction_metrics = EvaluateCorrection(
+        rows, model["correction_weights"], args.split
+    )
+    print(
+        json.dumps(
             {
-                "text": row["text"],
-                "expected": row["label"],
-                "predicted": labels[int(predicted_id)],
-                "confidence": float(probabilities[index, predicted_id]),
-                "top_two_margin": float(
-                    np.sort(probabilities[index])[-1]
-                    - np.sort(probabilities[index])[-2]
-                ),
-            }
-            for index, (row, predicted_id) in enumerate(zip(rows, predicted_ids))
-        ],
-    }
-    serialized = json.dumps(details, ensure_ascii=False, indent=2)
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(serialized + "\n", encoding="utf-8")
-    print(serialized)
+                "split": args.split,
+                "intent_accuracy": intent_metrics["accuracy"],
+                "intent_macro_f1": intent_metrics["macro_f1"],
+                "intent_confusion_matrix": intent_metrics["confusion_matrix"],
+                "correction": correction_metrics,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    Main()
+    raise SystemExit(Main())

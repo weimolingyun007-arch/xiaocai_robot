@@ -10,3 +10,12 @@ console = true
 max_file_size_mb = 20
 max_files_per_day = 3
 retention_days = 7
+
+[classifier]
+model_path = "intent/intent_model.json"
+confidence_threshold = 0.25
+correction_threshold = 0.65
+
+[intent_feedback]
+enabled = true
+database_path = "/userdata/config/intent_node/intent_feedback.sqlite3"

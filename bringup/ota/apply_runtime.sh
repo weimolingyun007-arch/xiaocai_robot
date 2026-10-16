@@ -119,6 +119,7 @@ for required in \
   resource/speech/wake_ack.wav \
   resource/audio/asound.conf \
   resource/music/ncm_player_compat.cjs \
+  resource/intent/intent_model.json \
   resource/display/idle.ppm \
   resource/display/listening.ppm \
   resource/display/thinking.ppm \

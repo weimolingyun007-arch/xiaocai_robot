@@ -231,10 +231,15 @@ void DisplayNode::ShowRobotState(common::RobotState state) {
 
 void DisplayNode::RefreshDisplay() {
   const auto music = lyrics_presenter_.CurrentView(SteadySeconds());
-  if (music)
-    display_window_->ShowMusic(*music);
-  else if (!display_window_->IsVolumeOverlayActive())
-    ShowRobotState(robot_state_);
+  if (!display_window_->IsVolumeOverlayActive()) {
+    if (robot_state_ != common::RobotState::Idle) {
+      ShowRobotState(robot_state_);
+    } else if (music) {
+      display_window_->ShowMusic(*music);
+    } else {
+      ShowRobotState(robot_state_);
+    }
+  }
 }
 
 void DisplayNode::ProcessDisplayEvents() {

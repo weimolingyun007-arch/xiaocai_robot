@@ -6,7 +6,6 @@
 #include "xiaocai_msgs/msg/ble_received.hpp"
 #include "xiaocai_msgs/msg/ble_status.hpp"
 #include "xiaocai_msgs/srv/connect_ble.hpp"
-#include "xiaocai_msgs/srv/disconnect_ble.hpp"
 #include "xiaocai_msgs/srv/get_ble_status.hpp"
 #include "xiaocai_msgs/srv/scan_ble.hpp"
 #include "xiaocai_msgs/srv/send_ble_data.hpp"
@@ -37,9 +36,6 @@ private:
   void HandleConnect(
       const std::shared_ptr<xiaocai_msgs::srv::ConnectBle::Request> request,
       std::shared_ptr<xiaocai_msgs::srv::ConnectBle::Response> response);
-  void HandleDisconnect(
-      const std::shared_ptr<xiaocai_msgs::srv::DisconnectBle::Request> request,
-      std::shared_ptr<xiaocai_msgs::srv::DisconnectBle::Response> response);
   void HandleSend(
       const std::shared_ptr<xiaocai_msgs::srv::SendBleData::Request> request,
       std::shared_ptr<xiaocai_msgs::srv::SendBleData::Response> response);
@@ -69,8 +65,6 @@ private:
       received_publisher_;
   rclcpp::Service<xiaocai_msgs::srv::ScanBle>::SharedPtr scan_service_;
   rclcpp::Service<xiaocai_msgs::srv::ConnectBle>::SharedPtr connect_service_;
-  rclcpp::Service<xiaocai_msgs::srv::DisconnectBle>::SharedPtr
-      disconnect_service_;
   rclcpp::Service<xiaocai_msgs::srv::SendBleData>::SharedPtr send_service_;
   rclcpp::Service<xiaocai_msgs::srv::SetBleNotification>::SharedPtr
       notification_service_;

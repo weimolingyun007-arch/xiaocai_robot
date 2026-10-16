@@ -33,10 +33,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetWifiStatus.srv"
   "srv/ScanBle.srv"
   "srv/ConnectBle.srv"
-  "srv/DisconnectBle.srv"
   "srv/SendBleData.srv"
   "srv/SetBleNotification.srv"
   "srv/GetBleStatus.srv"
+  "srv/SubmitIntentCorrection.srv"
   DEPENDENCIES builtin_interfaces
 )
 

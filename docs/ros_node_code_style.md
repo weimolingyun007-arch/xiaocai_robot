@@ -26,7 +26,7 @@
 | `src/main.cpp` | 初始化 ROS，创建并运行节点，最后关闭 ROS；不放业务规则或通信对象创建逻辑。 |
 | `src/<node_package>_node.cpp` | 实现 `rclcpp::Node` 子类、ROS 通信初始化和回调协调。 |
 | `include/<node_package>/<node_package>_node.hpp` | 节点类声明、ROS 通信成员及必要的回调声明。 |
-| `src/<helper_class>.cpp`、`include/<node_package>/<helper_class>.hpp` | 实现可独立组织的业务逻辑，例如意图分类、参数解析或设备控制策略。 |
+| `src/<helper_class>.cpp`、`include/<node_package>/<helper_class>.hpp` | 实现可独立组织的业务逻辑，例如 `IntentClassifier` 意图模型、参数解析或设备控制策略。 |
 | `config/biz_config.toml` | 保存本节点的公共配置和业务配置，随节点包安装。 |
 | `CMakeLists.txt` | 声明 C++ 标准、依赖、可执行文件源文件和安装规则。 |
 | `package.xml` | 声明 ROS 包依赖和包元信息。 |
@@ -46,7 +46,7 @@
 
 ### 业务逻辑类
 
-- 封装一个清楚的业务职责，例如 `IntentRules`。
+- 封装一个清楚的业务职责，例如模型驱动的 `IntentClassifier`；意图类别判断应由模型完成，参数提取与范围校验单独处理。
 - 尽可能使用普通 C++ 数据类型作为输入和输出，不依赖 ROS 节点、executor 或话题状态。
 - 不直接发布消息、调用服务或执行其他 ROS 副作用；由节点类负责将业务结果接入 ROS。
 - 公开接口应表达完整输入和输出；结果结构体为各字段提供明确的默认值。
@@ -82,14 +82,14 @@
 
 - 目录、文件名、变量使用 `snake_case`。
 - 项目自有函数和类成员方法统一使用 `PascalCase`（大驼峰），例如 `OnTextCallback()`、`InitPublishers()`、`Classify()`；函数声明、定义和所有调用点保持一致。`main` 等语言入口、外部接口要求固定名称的回调/重写方法，以及第三方库 API 保持其规定名称。
-- ROS 节点类名使用 `PascalCase` 并以 `Node` 结尾，例如 `MusicNode`、`SpeechInputNode`、`IntentNode`；业务辅助类和结构体使用体现职责的 `PascalCase`，例如 `IntentRules`、`IntentResult`。
+- ROS 节点类名使用 `PascalCase` 并以 `Node` 结尾，例如 `MusicNode`、`SpeechInputNode`、`IntentNode`；业务辅助类和结构体使用体现职责的 `PascalCase`，例如 `IntentClassifier`、`IntentResult`。
 - ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`。
 - 订阅者回调统一由节点成员方法处理，方法名采用 `On<消息或主题>Callback` 格式，例如 `OnTextCallback()`、`OnIntentCallback()`、`OnAudioPlayingCallback()`。`InitSubscribers()` 中的订阅 lambda 只转交消息，不承载业务处理逻辑。
 - ROS 通信对象成员变量以用途或主题命名，并使用完整对象类型后缀：发布者为 `_publisher_`、订阅者为 `_subscriber_`、客户端为 `_client_`、服务端为 `_server_`。例如 `state_publisher_`、`intent_subscriber_`、`volume_get_client_`、`volume_get_server_`；避免使用 `state_`、`intent_sub_` 等无法直接判断对象类型的名称。
 - 封装客户端请求的成员函数统一使用 `Client` 前缀，例如 `ClientVolume()`；客户端请求函数单独分组，不与 `Publish...()` 发布函数放在同一组。
 - 类头文件中的私有成员函数按职责分组；每组第一条声明上方添加单行注释说明该组职责，不同组之间空一行。ROS 通信方法可按初始化、消息发布、订阅回调等职责分组。
 - `.cpp` 中成员函数定义的分组顺序及组内顺序必须与头文件中的声明一致。
-- 类成员变量使用 `snake_case` 并以下划线结尾，例如 `intent_rules_`、`intent_publisher_`。
+- 类成员变量使用 `snake_case` 并以下划线结尾，例如 `intent_classifier_`、`intent_publisher_`。
 - 运行状态和资源句柄等类成员需要显式设置初始值时，在 `.cpp` 构造函数的初始化列表中设置；头文件的成员声明处不使用类内初始化器，例如不要写 `VoskRecognizer *wake_recognizer_ = nullptr;`。配置结构体和结果值类型可按需要定义字段默认值。依赖其他资源或运行时 API 创建的对象，在构造函数体中按依赖顺序创建并检查结果。
 - 常量使用 `k` 前缀和描述性名称，例如 `kMaxRetryCount`；私有实现细节和文件内常量放在 `.cpp` 的匿名命名空间中。
 - 使用仓库根目录 `.clang-format` 规定的格式：基于 LLVM 风格、两个空格缩进；左花括号与函数或控制语句同行。简单提前返回可以单行书写；多步操作或多分支逻辑使用多行和花括号。
