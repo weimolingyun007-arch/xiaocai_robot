@@ -11,13 +11,15 @@ namespace xiaocai_robot {
 
 MemoryNode::MemoryNode()
     : Node("memory_node"), memory_config_(),
-      log_manager_("memory_node", memory_config_.Logging()) {
+      log_manager_("memory_node", memory_config_.Logging()),
+      readiness_publisher_(*this, "memory_node") {
   const std::string path = declare_parameter<std::string>(
       "db_path", memory_config_.Settings().db_path);
   memory_manager_ = std::make_unique<MemoryManager>(path);
   InitPublishers();
   InitSubscribers();
   InitTimers();
+  readiness_publisher_.MarkReady();
 }
 
 void MemoryNode::InitPublishers() {

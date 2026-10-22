@@ -11,13 +11,14 @@ namespace xiaocai_robot {
 DialogueNode::DialogueNode()
     : Node("dialogue_node"), dialogue_config_(),
       log_manager_("dialogue_node", dialogue_config_.Logging()),
-      dialogue_controller_() {
+      readiness_publisher_(*this, "dialogue_node"), dialogue_controller_() {
   InitPublishers();
   InitSubscribers();
   InitClients();
   InitController();
   InitTimers();
   PublishState(common::RobotState::Idle);
+  readiness_publisher_.MarkReady();
 }
 
 DialogueNode::~DialogueNode() { dialogue_controller_.reset(); }

@@ -2,11 +2,18 @@
 #include "defination/volume_action.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
+#include <string>
 
 namespace xiaocai_robot {
 namespace {
+constexpr std::array<const char *, 7> kRequiredNodes{
+    "audio_io_node", "speech_input_node", "intent_node", "dialogue_node",
+    "memory_node",   "tts_node",          "music_node"};
+constexpr double kReadinessTimeoutSeconds = 3.0;
+
 double SteadySeconds() {
   return std::chrono::duration<double>(
              std::chrono::steady_clock::now().time_since_epoch())
@@ -21,8 +28,9 @@ DisplayNode::DisplayNode()
           display_config_.AssetDirectory(),
           display_config_.Settings().font_family)),
       robot_state_(common::RobotState::Idle), lyrics_presenter_(),
-      last_clock_update_(0.0) {
-  ShowRobotState(robot_state_);
+      last_clock_update_(0.0), system_ready_(false) {
+  display_window_->ShowStartup(StartupIndicators(SteadySeconds()),
+                               SteadySeconds());
   InitPublishers();
   InitSubscribers();
   InitClients();
@@ -90,6 +98,12 @@ void DisplayNode::InitSubscribers() {
         OnBleStatusCallback(*message);
       });
   ++initialized_count;
+  readiness_subscriber_ = create_subscription<xiaocai_msgs::msg::NodeReadiness>(
+      "/xiaocai_robot/system/readiness", rclcpp::QoS(1).transient_local(),
+      [this](xiaocai_msgs::msg::NodeReadiness::SharedPtr message) {
+        OnReadinessCallback(*message);
+      });
+  ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
@@ -98,62 +112,8 @@ void DisplayNode::InitClients() {
       "/xiaocai_robot/audio/get_volume");
 }
 
-void DisplayNode::OnVolumeStateCallback(const std_msgs::msg::Int32 &message) {
-  if (message.data >= 0 && message.data <= 150)
-    display_window_->ShowVolume(message.data);
-}
-
-void DisplayNode::OnWifiStatusCallback(
-    const xiaocai_msgs::msg::WifiStatus &message) {
-  display_window_->ShowWifiStatus(message);
-}
-
-void DisplayNode::OnBleStatusCallback(
-    const xiaocai_msgs::msg::BleStatus &message) {
-  display_window_->ShowBleStatus(message);
-}
-
-void DisplayNode::PublishMusicCommand(common::MusicAction action) {
-  xiaocai_msgs::msg::MusicCommand message;
-  message.timestamp = now();
-  message.action = static_cast<std::uint8_t>(action);
-  music_command_publisher_->publish(message);
-  LOG_INFO("Music page button: {}", common::MusicActionName(action));
-}
-
-void DisplayNode::PublishVolumeCommand(int percent) {
-  xiaocai_msgs::msg::VolumeCommand message;
-  message.timestamp = now();
-  message.action = static_cast<std::uint8_t>(common::VolumeAction::Set);
-  message.percent = std::clamp(percent, 0, 150);
-  volume_command_publisher_->publish(message);
-}
-
-void DisplayNode::RefreshVolume(double now) {
-  if (volume_query_pending_ && now - last_volume_query_ > 3.0) {
-    volume_client_->prune_pending_requests();
-    volume_query_pending_ = false;
-  }
-  if (volume_query_pending_ || now - last_volume_query_ < 5.0 ||
-      !volume_client_->service_is_ready())
-    return;
-  last_volume_query_ = now;
-  volume_query_pending_ = true;
-  auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
-  request->timestamp = this->now();
-  volume_client_->async_send_request(
-      request,
-      [this](
-          rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedFuture future) {
-        volume_query_pending_ = false;
-        const auto percent = future.get()->percent;
-        if (percent >= 0 && percent <= 150)
-          display_window_->ShowVolume(percent);
-      });
-}
-
 void DisplayNode::InitTimers() {
-  timer_ = create_wall_timer(std::chrono::milliseconds(100),
+  timer_ = create_wall_timer(std::chrono::milliseconds(50),
                              [this] { ProcessDisplayEvents(); });
 }
 
@@ -203,6 +163,91 @@ void DisplayNode::OnMusicLoginCallback(
   RefreshDisplay();
 }
 
+void DisplayNode::OnVolumeStateCallback(const std_msgs::msg::Int32 &message) {
+  if (message.data >= 0 && message.data <= 150)
+    display_window_->ShowVolume(message.data);
+}
+
+void DisplayNode::OnWifiStatusCallback(
+    const xiaocai_msgs::msg::WifiStatus &message) {
+  display_window_->ShowWifiStatus(message);
+}
+
+void DisplayNode::OnBleStatusCallback(
+    const xiaocai_msgs::msg::BleStatus &message) {
+  display_window_->ShowBleStatus(message);
+}
+
+void DisplayNode::OnReadinessCallback(
+    const xiaocai_msgs::msg::NodeReadiness &message) {
+  if (std::find(kRequiredNodes.begin(), kRequiredNodes.end(),
+                message.node_name) == kRequiredNodes.end())
+    return;
+  if (message.ready)
+    readiness_received_at_[message.node_name] = SteadySeconds();
+  else
+    readiness_received_at_.erase(message.node_name);
+}
+
+void DisplayNode::PublishMusicCommand(common::MusicAction action) {
+  xiaocai_msgs::msg::MusicCommand message;
+  message.timestamp = now();
+  message.action = static_cast<std::uint8_t>(action);
+  music_command_publisher_->publish(message);
+  LOG_INFO("Music page button: {}", common::MusicActionName(action));
+}
+
+void DisplayNode::PublishVolumeCommand(int percent) {
+  xiaocai_msgs::msg::VolumeCommand message;
+  message.timestamp = now();
+  message.action = static_cast<std::uint8_t>(common::VolumeAction::Set);
+  message.percent = std::clamp(percent, 0, 150);
+  volume_command_publisher_->publish(message);
+}
+
+void DisplayNode::RefreshVolume(double now) {
+  if (volume_query_pending_ && now - last_volume_query_ > 3.0) {
+    volume_client_->prune_pending_requests();
+    volume_query_pending_ = false;
+  }
+  if (volume_query_pending_ || now - last_volume_query_ < 5.0 ||
+      !volume_client_->service_is_ready())
+    return;
+  last_volume_query_ = now;
+  volume_query_pending_ = true;
+  auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
+  request->timestamp = this->now();
+  volume_client_->async_send_request(
+      request,
+      [this](
+          rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedFuture future) {
+        volume_query_pending_ = false;
+        const auto percent = future.get()->percent;
+        if (percent >= 0 && percent <= 150)
+          display_window_->ShowVolume(percent);
+      });
+}
+
+bool DisplayNode::IsNodeReady(const std::string &node_name, double now) const {
+  const auto found = readiness_received_at_.find(node_name);
+  return found != readiness_received_at_.end() &&
+         now - found->second <= kReadinessTimeoutSeconds;
+}
+
+bool DisplayNode::AreCoreNodesReady(double now) const {
+  return std::all_of(kRequiredNodes.begin(), kRequiredNodes.end(),
+                     [this, now](const char *node_name) {
+                       return IsNodeReady(node_name, now);
+                     });
+}
+
+std::array<bool, 3> DisplayNode::StartupIndicators(double now) const {
+  return {IsNodeReady("audio_io_node", now) &&
+              IsNodeReady("speech_input_node", now),
+          IsNodeReady("intent_node", now),
+          IsNodeReady("dialogue_node", now) && IsNodeReady("tts_node", now)};
+}
+
 void DisplayNode::ShowRobotState(common::RobotState state) {
   const char *image_name = nullptr;
   switch (state) {
@@ -230,7 +275,18 @@ void DisplayNode::ShowRobotState(common::RobotState state) {
 }
 
 void DisplayNode::RefreshDisplay() {
-  const auto music = lyrics_presenter_.CurrentView(SteadySeconds());
+  const double now = SteadySeconds();
+  if (!AreCoreNodesReady(now)) {
+    system_ready_ = false;
+    display_window_->ShowStartup(StartupIndicators(now), now);
+    return;
+  }
+  if (!system_ready_) {
+    system_ready_ = true;
+    LOG_INFO("Core nodes are ready; switching to the main display");
+  }
+
+  const auto music = lyrics_presenter_.CurrentView(now);
   if (!display_window_->IsVolumeOverlayActive()) {
     if (robot_state_ != common::RobotState::Idle) {
       ShowRobotState(robot_state_);

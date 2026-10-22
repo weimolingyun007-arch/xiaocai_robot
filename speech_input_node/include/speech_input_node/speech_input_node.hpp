@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/log_manager.hpp"
+#include "common/node_readiness_publisher.hpp"
 #include "speech_input_node/speech_input_config.hpp"
 #include "speech_input_node/speech_input_controller.hpp"
 
@@ -43,6 +44,7 @@ private:
 
   SpeechInputConfig speech_input_config_;
   LogManager log_manager_;
+  common::NodeReadinessPublisher readiness_publisher_;
   std::unique_ptr<SpeechInputController> speech_input_controller_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr text_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::AudioPlay>::SharedPtr play_publisher_;

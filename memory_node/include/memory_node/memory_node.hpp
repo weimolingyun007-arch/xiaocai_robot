@@ -1,5 +1,6 @@
 #pragma once
 #include "common/log_manager.hpp"
+#include "common/node_readiness_publisher.hpp"
 #include "memory_node/memory_config.hpp"
 #include "memory_node/memory_manager.hpp"
 #include "xiaocai_msgs/msg/memory_command.hpp"
@@ -24,6 +25,7 @@ private:
 
   MemoryConfig memory_config_;
   LogManager log_manager_;
+  common::NodeReadinessPublisher readiness_publisher_;
   std::unique_ptr<MemoryManager> memory_manager_;
   rclcpp::Publisher<xiaocai_msgs::msg::MemoryResult>::SharedPtr
       result_publisher_;

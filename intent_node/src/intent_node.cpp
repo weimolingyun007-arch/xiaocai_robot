@@ -74,6 +74,7 @@ const char *IntentResultName(const IntentResult &result) {
 IntentNode::IntentNode()
     : Node("intent_node"), intent_config_(),
       log_manager_("intent_node", intent_config_.Logging()),
+      readiness_publisher_(*this, "intent_node"),
       intent_classifier_(ResolveModelPath(intent_config_.Settings().model_path),
                          intent_config_.Settings().confidence_threshold,
                          intent_config_.Settings().correction_threshold),
@@ -94,6 +95,7 @@ IntentNode::IntentNode()
   InitPublishers();
   InitSubscribers();
   InitServers();
+  readiness_publisher_.MarkReady();
 }
 
 void IntentNode::InitPublishers() {

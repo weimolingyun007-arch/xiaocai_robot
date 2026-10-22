@@ -10,14 +10,18 @@
 #include "xiaocai_msgs/msg/music_login.hpp"
 #include "xiaocai_msgs/msg/music_lyrics.hpp"
 #include "xiaocai_msgs/msg/music_state.hpp"
+#include "xiaocai_msgs/msg/node_readiness.hpp"
 #include "xiaocai_msgs/msg/robot_state.hpp"
 #include "xiaocai_msgs/msg/volume_command.hpp"
 #include "xiaocai_msgs/msg/wifi_status.hpp"
 #include "xiaocai_msgs/srv/get_volume.hpp"
 #include <std_msgs/msg/int32.hpp>
 
+#include <array>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
+#include <string>
+#include <unordered_map>
 
 namespace xiaocai_robot {
 
@@ -40,9 +44,17 @@ private:
   void OnVolumeStateCallback(const std_msgs::msg::Int32 &message);
   void OnWifiStatusCallback(const xiaocai_msgs::msg::WifiStatus &message);
   void OnBleStatusCallback(const xiaocai_msgs::msg::BleStatus &message);
+  void OnReadinessCallback(const xiaocai_msgs::msg::NodeReadiness &message);
+
+  // ROS command publishing and service polling.
   void PublishMusicCommand(common::MusicAction action);
   void PublishVolumeCommand(int percent);
   void RefreshVolume(double now);
+
+  // Startup readiness tracking.
+  bool IsNodeReady(const std::string &node_name, double now) const;
+  bool AreCoreNodesReady(double now) const;
+  std::array<bool, 3> StartupIndicators(double now) const;
 
   // Display state and X11 event handling.
   void ShowRobotState(common::RobotState state);
@@ -55,6 +67,8 @@ private:
   common::RobotState robot_state_;
   LyricsPresenter lyrics_presenter_;
   double last_clock_update_;
+  bool system_ready_;
+  std::unordered_map<std::string, double> readiness_received_at_;
   double last_volume_query_{-5.0};
   bool volume_query_pending_{false};
   rclcpp::Publisher<xiaocai_msgs::msg::MusicCommand>::SharedPtr
@@ -76,6 +90,8 @@ private:
       wifi_status_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::BleStatus>::SharedPtr
       ble_status_subscriber_;
+  rclcpp::Subscription<xiaocai_msgs::msg::NodeReadiness>::SharedPtr
+      readiness_subscriber_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 

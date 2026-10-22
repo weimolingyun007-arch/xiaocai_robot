@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/log_manager.hpp"
+#include "common/node_readiness_publisher.hpp"
 #include "music_node/music_config.hpp"
 #include "music_node/music_controller.hpp"
 #include "music_node/music_login_manager.hpp"
@@ -52,6 +53,7 @@ private:
 
   MusicConfig music_config_;
   LogManager log_manager_;
+  common::NodeReadinessPublisher readiness_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MusicState>::SharedPtr state_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MusicLogin>::SharedPtr login_publisher_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr tts_publisher_;

@@ -10,11 +10,13 @@ namespace xiaocai_robot {
 
 MusicNode::MusicNode()
     : Node("music_node"), music_config_(),
-      log_manager_("music_node", music_config_.Logging()) {
+      log_manager_("music_node", music_config_.Logging()),
+      readiness_publisher_(*this, "music_node") {
   InitPublishers();
   InitSubscribers();
   InitTimers();
   InitController();
+  readiness_publisher_.MarkReady();
 }
 
 MusicNode::~MusicNode() {

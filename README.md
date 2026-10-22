@@ -17,7 +17,7 @@
 | `music_node` | 调用网易云 ncm-cli 搜歌、播放及控制 |
 | `wifi_manager` | 扫描和连接 Wi-Fi、自动重连并发布连接状态及上下行速率 |
 | `ble_manager` | 管理蓝牙低功耗扫描、连接、GATT 写入与通知接收，并发布蓝牙状态 |
-| `display_node` | 横屏表情、音乐信息和同步歌词显示 |
+| `display_node` | 横屏开机就绪页、表情、音乐信息和同步歌词显示 |
 | `common` | 节点共享的配置基类、日志管理、业务枚举和 MPV 辅助函数 |
 | `thirdparty` | C++ 头文件和 ARM64 动态库 |
 | `xiaocai_msgs` | ROS 2 自定义消息和服务接口源码 |
@@ -140,6 +140,7 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/audio/result`：`AudioPlaybackResult`，WAV 路径及播放结果；取消、文件缺失或静默丢弃也回报失败
 - `/xiaocai_robot/audio/play`：待播放 WAV 路径，类型为 `xiaocai_msgs/msg/AudioPlay`；`path` 为空时停止播放并清空待播队列
 - `/xiaocai_robot/state`：机器人状态，类型为 `xiaocai_msgs/msg/RobotState`，字段 `state`
+- `/xiaocai_robot/system/readiness`：核心节点初始化状态，类型为 `xiaocai_msgs/msg/NodeReadiness`；每个核心节点就绪后每秒发布一次，显示节点用它决定何时结束开机页
 - `/xiaocai_robot/memory/command`：记忆操作请求，类型为 `xiaocai_msgs/msg/MemoryCommand`，字段 `operation`、`request_id`、`content`、`delay_seconds`、`enabled`
 - `/xiaocai_robot/memory/result`：记忆操作结果，类型为 `xiaocai_msgs/msg/MemoryResult`，字段 `operation`、`request_id`、`ok`、`error`、`facts`、`content`、`deleted`、`enabled`
 - `/xiaocai_robot/reminder/due`：到期提醒，类型为 `xiaocai_msgs/msg/Reminder`，字段 `id`、`content`
@@ -166,7 +167,7 @@ sudo bash bringup/ota/install_autostart.sh
 
 `MusicState.state` 的数值在 `common/include/defination/music_state.hpp` 定义：0 停止、1 搜索中、2 播放、3 暂停、4 错误。音乐状态话题支持保留最后一条消息，语音节点重启后也能获取播放状态。歌曲能否播放取决于开放平台和账号权限，节点只选择平台标记当前账号可播放的搜索结果。
 
-`dialogue_node` 根据唤醒、对话阶段和实际音频播放决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点晚于对话节点启动时也能读取最近状态。
+`display_node` 先启动并显示与待机表情同款的极简动画开机页。音频、语音识别、意图、对话、记忆、TTS 和音乐节点完成本地资源初始化后，在 `/xiaocai_robot/system/readiness` 定期发布就绪状态；所有核心节点就绪后，显示页自动切入机器人当前表情或歌词页。Wi-Fi 和蓝牙连接不阻塞开机。`dialogue_node` 根据唤醒、对话阶段和实际音频播放决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点可读取最近状态。
 
 ### 同步歌词与会话完成
 

@@ -12,11 +12,13 @@ namespace xiaocai_robot {
 SpeechInputNode::SpeechInputNode()
     : Node("speech_input_node"), speech_input_config_(),
       log_manager_("speech_input_node", speech_input_config_.Logging()),
+      readiness_publisher_(*this, "speech_input_node"),
       speech_input_controller_(), last_wake_at_(0, 0, RCL_ROS_TIME) {
   InitPublishers();
   InitSubscribers();
   InitController();
   InitTimers();
+  readiness_publisher_.MarkReady();
 }
 
 void SpeechInputNode::InitPublishers() {

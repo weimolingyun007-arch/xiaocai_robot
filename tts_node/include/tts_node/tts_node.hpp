@@ -1,6 +1,7 @@
 #pragma once
 #include "common/common.hpp"
 #include "common/log_manager.hpp"
+#include "common/node_readiness_publisher.hpp"
 #include "tts_node/tts_config.hpp"
 #include "xiaocai_msgs/msg/audio_play.hpp"
 #include "xiaocai_msgs/msg/audio_playback_result.hpp"
@@ -40,6 +41,7 @@ private:
 
   TtsConfig tts_config_;
   LogManager log_manager_;
+  common::NodeReadinessPublisher readiness_publisher_;
   const SherpaOnnxOfflineTts *tts_;
   std::string model_, lexicon_, tokens_, fsts_;
   int speaker_, id_;

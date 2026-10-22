@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/log_manager.hpp"
+#include "common/node_readiness_publisher.hpp"
 #include "intent_node/intent_classifier.hpp"
 #include "intent_node/intent_config.hpp"
 #include "intent_node/intent_feedback_store.hpp"
@@ -40,6 +41,7 @@ private:
 
   IntentConfig intent_config_;
   LogManager log_manager_;
+  common::NodeReadinessPublisher readiness_publisher_;
   IntentClassifier intent_classifier_;
   IntentFeedbackStore intent_feedback_store_;
   std::uint64_t next_memory_request_id_;

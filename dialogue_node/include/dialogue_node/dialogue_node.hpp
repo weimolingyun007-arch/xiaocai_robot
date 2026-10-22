@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/log_manager.hpp"
+#include "common/node_readiness_publisher.hpp"
 #include "dialogue_node/dialogue_config.hpp"
 #include "dialogue_node/dialogue_controller.hpp"
 #include "xiaocai_msgs/msg/audio_play.hpp"
@@ -70,6 +71,7 @@ private:
 
   DialogueConfig dialogue_config_;
   LogManager log_manager_;
+  common::NodeReadinessPublisher readiness_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::TtsRequest>::SharedPtr tts_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::ConversationState>::SharedPtr
       conversation_publisher_;

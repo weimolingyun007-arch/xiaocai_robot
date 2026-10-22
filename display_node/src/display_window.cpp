@@ -42,6 +42,7 @@ constexpr int kVolumeBottom = 344;
 constexpr int kVolumeGestureTop = 120;
 constexpr int kVolumeGestureBottom = 405;
 constexpr double kVolumeVisibleSeconds = 1.4;
+constexpr double kPi = 3.14159265358979323846;
 
 double SteadySeconds() {
   return std::chrono::duration<double>(
@@ -166,8 +167,9 @@ struct DisplayWindow::State {
   State()
       : display(nullptr), window(0), graphics_context(nullptr), buffer(0),
         text_draw(nullptr), fonts{}, colors{}, color_count(0),
-        music_mode(false), login_required(false), login_loading(false),
-        clock_text(LocalClockText()) {}
+        music_mode(false), startup_mode(false), startup_indicators{},
+        startup_animation_seconds(0.0), login_required(false),
+        login_loading(false), clock_text(LocalClockText()) {}
   ~State();
 
   int TextWidth(const std::string &text, std::size_t font) const;
@@ -175,6 +177,7 @@ struct DisplayWindow::State {
   void DrawText(const std::string &text, std::size_t font, std::size_t color,
                 int x, int baseline, bool centered = false);
   void DrawStatusBar();
+  void DrawStartup();
   void DrawMusicControls();
   void DrawVolumeOverlay();
   int MusicButtonAt(int x, int y) const;
@@ -195,6 +198,9 @@ struct DisplayWindow::State {
   std::unordered_map<std::string, XImage *> images;
   std::string active_image;
   bool music_mode;
+  bool startup_mode;
+  std::array<bool, 3> startup_indicators;
+  double startup_animation_seconds;
   std::string music_signature;
   xiaocai_msgs::msg::WifiStatus wifi_status;
   xiaocai_msgs::msg::BleStatus ble_status;
@@ -327,6 +333,64 @@ void DisplayWindow::State::DrawStatusBar() {
     XFillArc(display, buffer, graphics_context, 791, 32, 4, 4, 0, 360 * 64);
   XSetLineAttributes(display, graphics_context, 1, LineSolid, CapButt,
                      JoinMiter);
+}
+
+void DisplayWindow::State::DrawStartup() {
+  const int screen = DefaultScreen(display);
+  XSetForeground(display, graphics_context, BlackPixel(display, screen));
+  XFillRectangle(display, buffer, graphics_context, 0, 0, 800, 480);
+
+  const double pulse =
+      0.5 + 0.5 * std::sin(startup_animation_seconds * 2.0 * kPi / 3.2);
+  const int center_x = 400;
+  const int center_y =
+      190 + static_cast<int>(std::lround(
+                3.0 * std::sin(startup_animation_seconds * 2.0 * kPi / 3.2)));
+  XSetLineAttributes(display, graphics_context, 1, LineSolid, CapRound,
+                     JoinRound);
+  XSetForeground(display, graphics_context, colors[4].pixel);
+  const int outer_radius = 77 + static_cast<int>(std::lround(pulse * 5.0));
+  XDrawArc(display, buffer, graphics_context, center_x - outer_radius,
+           center_y - outer_radius, outer_radius * 2, outer_radius * 2, 0,
+           360 * 64);
+  XDrawArc(display, buffer, graphics_context, center_x - 58, center_y - 58, 116,
+           116, 0, 360 * 64);
+
+  const double blink_phase = std::fmod(startup_animation_seconds, 4.8);
+  const int eye_radius_y = blink_phase >= 4.0 && blink_phase < 4.18 ? 2 : 23;
+  XSetLineAttributes(display, graphics_context, 6, LineSolid, CapRound,
+                     JoinRound);
+  XSetForeground(display, graphics_context, colors[3].pixel);
+  for (const int eye_x : {center_x - 69, center_x + 69}) {
+    XDrawArc(display, buffer, graphics_context, eye_x - 23,
+             center_y - eye_radius_y, 46, eye_radius_y * 2, 0, 360 * 64);
+  }
+
+  XPoint mouth[]{
+      {static_cast<short>(center_x - 20), static_cast<short>(center_y + 22)},
+      {static_cast<short>(center_x - 14), static_cast<short>(center_y + 29)},
+      {static_cast<short>(center_x - 7), static_cast<short>(center_y + 34)},
+      {static_cast<short>(center_x), static_cast<short>(center_y + 36)},
+      {static_cast<short>(center_x + 7), static_cast<short>(center_y + 34)},
+      {static_cast<short>(center_x + 14), static_cast<short>(center_y + 29)},
+      {static_cast<short>(center_x + 20), static_cast<short>(center_y + 22)}};
+  XDrawLines(display, buffer, graphics_context, mouth,
+             static_cast<int>(sizeof(mouth) / sizeof(mouth[0])),
+             CoordModeOrigin);
+  XSetLineAttributes(display, graphics_context, 1, LineSolid, CapButt,
+                     JoinMiter);
+
+  DrawText("小蔡正在准备中", 1, 0, 400, 302, true);
+  DrawText("核心功能准备完成后自动进入待机", 0, 2, 400, 333, true);
+  constexpr std::array<const char *, 3> labels{"语音", "识别", "回复"};
+  constexpr std::array<int, 3> dot_x{306, 392, 478};
+  for (std::size_t index = 0; index < labels.size(); ++index) {
+    const auto color = startup_indicators[index] ? 3U : 1U;
+    XSetForeground(display, graphics_context, colors[color].pixel);
+    XFillArc(display, buffer, graphics_context, dot_x[index] - 4, 369, 8, 8, 0,
+             360 * 64);
+    DrawText(labels[index], 0, 2, dot_x[index] + 20, 378, true);
+  }
 }
 
 int DisplayWindow::State::MusicButtonAt(int x, int y) const {
@@ -480,6 +544,8 @@ void DisplayWindow::State::DrawLogin() {
 }
 
 void DisplayWindow::State::Present() {
+  if (startup_mode)
+    DrawStartup();
   DrawLogin();
   DrawStatusBar();
   XCopyArea(display, buffer, window, graphics_context, 0, 0, 800, 480, 0, 0);
@@ -556,7 +622,8 @@ DisplayWindow::DisplayWindow(std::filesystem::path asset_directory,
 DisplayWindow::~DisplayWindow() = default;
 
 void DisplayWindow::ShowImage(const std::string &image_name) {
-  if (!state_->music_mode && state_->active_image == image_name)
+  if (!state_->music_mode && !state_->startup_mode &&
+      state_->active_image == image_name)
     return;
   const auto found = state_->images.find(image_name);
   if (found == state_->images.end())
@@ -568,9 +635,26 @@ void DisplayWindow::ShowImage(const std::string &image_name) {
   state_->volume_visible = false;
   state_->pressed_button = -1;
   state_->music_mode = false;
+  state_->startup_mode = false;
   state_->music_signature.clear();
   XPutImage(state_->display, state_->buffer, state_->graphics_context,
             found->second, 0, 0, 0, 0, 800, 480);
+  state_->Present();
+}
+
+void DisplayWindow::ShowStartup(const std::array<bool, 3> &indicators,
+                                double animation_seconds) {
+  if (state_->dragging_volume)
+    XUngrabPointer(state_->display, CurrentTime);
+  state_->dragging_volume = false;
+  state_->volume_visible = false;
+  state_->pressed_button = -1;
+  state_->music_mode = false;
+  state_->startup_mode = true;
+  state_->active_image.clear();
+  state_->music_signature.clear();
+  state_->startup_indicators = indicators;
+  state_->startup_animation_seconds = animation_seconds;
   state_->Present();
 }
 
@@ -596,6 +680,7 @@ void DisplayWindow::ShowMusic(const MusicView &view) {
   if (state_->music_mode && state_->music_signature == signature)
     return;
   state_->music_mode = true;
+  state_->startup_mode = false;
   state_->music_paused = view.paused;
   state_->music_signature = signature;
   XSetForeground(state_->display, state_->graphics_context,

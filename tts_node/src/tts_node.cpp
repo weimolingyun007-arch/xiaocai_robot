@@ -12,8 +12,9 @@ namespace xiaocai_robot {
 
 TtsNode::TtsNode()
     : Node("tts_node"), tts_config_(),
-      log_manager_("tts_node", tts_config_.Logging()), tts_(nullptr),
-      speaker_(2), id_(0) {
+      log_manager_("tts_node", tts_config_.Logging()),
+      readiness_publisher_(*this, "tts_node"), tts_(nullptr), speaker_(2),
+      id_(0) {
   const auto &settings = tts_config_.Settings();
   std::string dir =
       declare_parameter<std::string>("model_dir", settings.model_dir);
@@ -41,6 +42,7 @@ TtsNode::TtsNode()
   InitPublishers();
   InitSubscribers();
   LOG_INFO("sherpa Chinese TTS loaded");
+  readiness_publisher_.MarkReady();
 }
 
 TtsNode::~TtsNode() {

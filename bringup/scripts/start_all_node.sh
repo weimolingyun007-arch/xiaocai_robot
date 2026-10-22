@@ -48,7 +48,7 @@ if command -v xinput >/dev/null 2>&1; then
   fi
 fi
 
-for module in audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node wifi_manager ble_manager display_node; do
+for module in display_node audio_io_node memory_node intent_node dialogue_node tts_node speech_input_node music_node wifi_manager ble_manager; do
   executable="$workspace/bin/$module"
   if [ "$module" = dialogue_node ]; then
     DEEPSEEK_API_KEY="$DEEPSEEK_API_KEY" "$executable" >"$log_dir/${module}.log" 2>&1 &

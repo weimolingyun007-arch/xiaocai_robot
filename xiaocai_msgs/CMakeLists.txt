@@ -27,6 +27,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BleScanResult.msg"
   "msg/BleScanList.msg"
   "msg/BleReceived.msg"
+  "msg/NodeReadiness.msg"
   "srv/GetVolume.srv"
   "srv/GetWifiList.srv"
   "srv/ConnectWifi.srv"

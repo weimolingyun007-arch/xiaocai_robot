@@ -2,6 +2,7 @@
 #include "audio_io_node/audio_io_config.hpp"
 #include "common/common.hpp"
 #include "common/log_manager.hpp"
+#include "common/node_readiness_publisher.hpp"
 #include "xiaocai_msgs/msg/audio_play.hpp"
 #include "xiaocai_msgs/msg/audio_playback_result.hpp"
 #include "xiaocai_msgs/msg/volume_command.hpp"
@@ -51,6 +52,7 @@ private:
   void PlaybackLoop();
   AudioIoConfig audio_io_config_;
   LogManager log_manager_;
+  common::NodeReadinessPublisher readiness_publisher_;
   std::string capture_device_, playback_device_, beep_, silence_,
       wake_ack_path_;
   int volume_percent_;

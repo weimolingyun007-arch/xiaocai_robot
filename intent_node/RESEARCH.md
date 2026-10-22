@@ -60,7 +60,7 @@
 
 ## 首轮 RoBERTa 实验（历史记录）
 
-已建立 `intent_node/training/`，包含 `hfl/rbt3` 微调、评估、ONNX 导出及动态 INT8 量化脚本。360 条种子语料每类 20 条（14 train、3 validation、3 test），均为人工示例，没有板端 ASR 真实转写。训练在开发机临时虚拟环境完成，权重和 ONNX 文件保存在本地忽略目录。
+早期曾在 `intent_node/training/` 进行 `hfl/rbt3` 微调、评估、ONNX 导出及动态 INT8 量化实验。360 条种子语料每类 20 条（14 train、3 validation、3 test），均为人工示例，没有板端 ASR 真实转写。实验在开发机临时虚拟环境完成；其 checkpoint 和 ONNX 导出文件已清理。
 
 8 轮微调的最佳验证结果在第 6 轮：accuracy 0.593、Macro-F1 0.560；独立测试集 accuracy 0.500、Macro-F1 0.490。“放音乐”被误分为 `music_pause`，最高分只有 0.126。语料量和泛化效果都不足以接入实时命令。绝对时间闹钟能力尚不存在，相关输入暂归入提醒澄清类。
 

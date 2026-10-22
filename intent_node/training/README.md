@@ -42,4 +42,4 @@ correction_threshold = 0.65
 
 数据库位于 `/userdata/config/intent_node/intent_feedback.sqlite3`。ROS 服务 `/xiaocai_robot/intent/feedback` 也可接收客户端提交的纠偏样本。人工复核后再将样本加入 JSONL，并分配数据集 split；不要把同一句或近似模板同时放进训练集和测试集。
 
-早期 `hfl/rbt3` 实验的 checkpoint 和 ONNX 文件保留在本地忽略目录，仅供历史对比；当前运行节点不加载该模型。
+早期 `hfl/rbt3` 实验的 checkpoint 和 ONNX 文件已清理。当前训练脚本使用字符 n-gram 模型，运行节点只加载 `intent_model.json`。

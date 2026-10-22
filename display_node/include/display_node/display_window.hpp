@@ -5,6 +5,7 @@
 #include "xiaocai_msgs/msg/ble_status.hpp"
 #include "xiaocai_msgs/msg/wifi_status.hpp"
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -22,6 +23,8 @@ public:
   DisplayWindow &operator=(const DisplayWindow &) = delete;
 
   void ShowImage(const std::string &image_name);
+  void ShowStartup(const std::array<bool, 3> &indicators,
+                   double animation_seconds);
   void ShowMusic(const MusicView &view);
   bool IsVolumeOverlayActive() const;
   void ShowWifiStatus(const xiaocai_msgs::msg::WifiStatus &status);
