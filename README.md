@@ -23,7 +23,6 @@
 | `xiaocai_msgs` | ROS 2 自定义消息和服务接口源码 |
 | `bringup` | 编译、启动、停止和 systemd 开机自启脚本 |
 | `docs` | 节点代码结构和编写约定 |
-| `build` | 每个节点由 CMake 和 Make 生成的可执行文件 |
 
 源码目录内的模型文件放在使用它们的节点目录下。板端运行时，DeepSeek 密钥和记忆数据库分别放在 `resource/deepseek.env` 和 `resource/memory.sqlite3`，文件权限为 600。首次更新时部署脚本会从原来的 `dialogue_node/.secrets/`、`memory_node/data/` 迁移数据。
 
