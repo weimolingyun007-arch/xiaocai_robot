@@ -47,7 +47,7 @@
 
 例：“放首歌”识别为播放但缺歌名，机器人询问后设置 `waiting_song`；下一句“两只老虎”补入 `MusicCommand.query`。孤立的“两只老虎”没有相同上下文时不能一律触发播放。若采用默认播放策略，应避免同时声称正在等待用户指定歌曲。
 
-分类结果按业务类型映射到独立消息：对话请求使用 `Intent` 和 `/xiaocai_robot/intent`，音乐操作使用 `MusicCommand`，音量操作使用 `VolumeCommand`，记忆和提醒操作使用 `MemoryCommand`。这让规则或后续模型只负责给出类型化候选，执行节点仍通过明确的操作字段和参数接收命令；第一轮实验不增加 ROS 节点。
+分类结果按业务类型映射到独立消息：对话请求使用 `DialogueCommand` 和 `/xiaocai_robot/dialogue/command`，音乐操作使用 `MusicCommand`，音量设置使用 `VolumeCommand`，记忆和提醒操作使用 `MemoryCommand`。音量查询由 `intent_node` 直接调用 `audio_io_node` 的 `GetVolume` 服务，随后经 TTS 文本话题播报，不经过 `dialogue_node`。其余需要对话能力的意图才发送给 `dialogue_node`。这让分类器输出保持类型化，执行节点仍通过明确的操作字段和参数接收命令；不增加 ROS 节点。
 
 ## 实验设计
 

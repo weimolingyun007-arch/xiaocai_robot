@@ -15,6 +15,7 @@
 #include "xiaocai_msgs/msg/volume_command.hpp"
 #include "xiaocai_msgs/msg/wifi_status.hpp"
 #include "xiaocai_msgs/srv/get_volume.hpp"
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/int32.hpp>
 
 #include <array>
@@ -49,6 +50,7 @@ private:
   // ROS command publishing and service polling.
   void PublishMusicCommand(common::MusicAction action);
   void PublishVolumeCommand(int percent);
+  void PublishStartupMusic();
   void RefreshVolume(double now);
 
   // Startup readiness tracking.
@@ -68,6 +70,8 @@ private:
   LyricsPresenter lyrics_presenter_;
   double last_clock_update_;
   bool system_ready_;
+  bool startup_music_published_;
+  double music_page_override_until_;
   std::unordered_map<std::string, double> readiness_received_at_;
   double last_volume_query_{-5.0};
   bool volume_query_pending_{false};
@@ -75,6 +79,7 @@ private:
       music_command_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::VolumeCommand>::SharedPtr
       volume_command_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr startup_music_publisher_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr
       volume_state_subscriber_;
   rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedPtr volume_client_;

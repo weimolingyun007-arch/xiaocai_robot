@@ -1,4 +1,5 @@
 #include "audio_io_node/audio_io_config.hpp"
+#include <cstdlib>
 #include <filesystem>
 
 namespace xiaocai_robot {
@@ -13,12 +14,26 @@ AudioIoConfig::AudioIoConfig() : NodeConfigBase("audio_io_node") {
     settings_.playback_device = *value;
   if (auto value = (*section)["wake_ack_path"].value<std::string>())
     settings_.wake_ack_path = *value;
+  if (auto value = (*section)["startup_music_path"].value<std::string>())
+    settings_.startup_music_path = *value;
   if (auto value = (*section)["volume_percent"].value<std::int64_t>())
     settings_.volume_percent = *value;
   if (auto value = (*section)["adc_pga_gain"].value<std::int64_t>())
     settings_.adc_pga_gain = *value;
   if (auto value = (*section)["mic_boost_gain"].value<std::int64_t>())
     settings_.mic_boost_gain = *value;
+}
+
+std::filesystem::path AudioIoConfig::StartupMusicPath() const {
+  const std::filesystem::path configured_path(settings_.startup_music_path);
+  if (configured_path.is_absolute())
+    return configured_path;
+
+  const char *resource_root = std::getenv("XIAOCAI_RESOURCE_ROOT");
+  const auto root = resource_root
+                        ? std::filesystem::path(resource_root)
+                        : std::filesystem::current_path() / "resource";
+  return root / configured_path;
 }
 
 } // namespace xiaocai_robot

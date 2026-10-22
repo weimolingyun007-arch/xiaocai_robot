@@ -54,16 +54,7 @@ struct DialogueMusicStatus {
   std::uint64_t request_id{0};
 };
 
-struct DialogueVolumeResult {
-  bool ok{false};
-  int percent{0};
-  std::string error;
-};
-
 struct DialogueCallbacks {
-  using VolumeResponseCallback =
-      std::function<void(DialogueVolumeResult result)>;
-
   std::function<void(const std::string &, std::uint64_t)> speak;
   std::function<void(common::ConversationPhase, bool)> publish_conversation;
   std::function<void(common::RobotState)> publish_state;
@@ -71,7 +62,6 @@ struct DialogueCallbacks {
   std::function<void(common::VolumeAction, int)> publish_volume_command;
   std::function<void(common::MusicAction, const std::string &, std::uint64_t)>
       publish_music_command;
-  std::function<void(VolumeResponseCallback)> request_volume;
 };
 
 class DialogueController {
@@ -93,7 +83,6 @@ public:
   void HandleMusicState(const DialogueMusicStatus &status);
   void HandleAudioPlay(const std::string &path);
   void HandleTimerTick();
-  void HandleConversationTurn(bool expects_speech);
   void HandleTtsResult(std::uint64_t request_id, bool success);
 
 private:
@@ -149,6 +138,8 @@ private:
   std::map<std::string, nlohmann::json> tool_results_;
   bool tool_volume_pending_;
   nlohmann::json tool_volume_result_;
+  bool volume_known_;
+  int volume_percent_;
   std::uint64_t music_sequence_;
   DialogueMusicStatus music_state_;
   std::map<std::string, common::MemoryOperation> pending_;

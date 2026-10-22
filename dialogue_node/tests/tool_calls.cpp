@@ -4,6 +4,7 @@
 #include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <xiaocai_msgs/msg/dialogue_command.hpp>
 #include <xiaocai_msgs/msg/music_command.hpp>
 #include <xiaocai_msgs/msg/tts_request.hpp>
 
@@ -20,25 +21,20 @@ int main(int argc, char **argv) {
     executor.add_node(dialogue);
     int volume = 60, volume_commands = 0, memory_writes = 0, music_commands = 0;
     std::vector<std::string> answers;
-    auto intent = node->create_publisher<xiaocai_msgs::msg::Intent>(
-        "/xiaocai_robot/intent", 10);
+    auto dialogue_command =
+        node->create_publisher<xiaocai_msgs::msg::DialogueCommand>(
+            "/xiaocai_robot/dialogue/command", 10);
     auto awake = node->create_publisher<std_msgs::msg::Bool>(
         "/xiaocai_robot/speech/awake", 10);
     auto interrupt = node->create_publisher<xiaocai_msgs::msg::AudioPlay>(
         "/xiaocai_robot/audio/play", 10);
     auto volume_state = node->create_publisher<std_msgs::msg::Int32>(
-        "/xiaocai_robot/audio/volume/state", 10);
+        "/xiaocai_robot/audio/volume/state", rclcpp::QoS(1).transient_local());
     auto memory_result =
         node->create_publisher<xiaocai_msgs::msg::MemoryResult>(
             "/xiaocai_robot/memory/result", 10);
     auto music_state = node->create_publisher<xiaocai_msgs::msg::MusicState>(
         "/xiaocai_robot/music/state", rclcpp::QoS(1).transient_local());
-    auto get_volume = node->create_service<xiaocai_msgs::srv::GetVolume>(
-        "/xiaocai_robot/audio/get_volume",
-        [&](xiaocai_msgs::srv::GetVolume::Request::SharedPtr,
-            xiaocai_msgs::srv::GetVolume::Response::SharedPtr response) {
-          response->percent = volume;
-        });
     auto volume_sub =
         node->create_subscription<xiaocai_msgs::msg::VolumeCommand>(
             "/xiaocai_robot/audio/volume/command", 10,
@@ -111,12 +107,12 @@ int main(int argc, char **argv) {
       std::cout << "PASS " << label << std::endl;
     };
     auto send = [&](const char *text) {
-      xiaocai_msgs::msg::Intent m;
+      xiaocai_msgs::msg::DialogueCommand m;
       m.timestamp = node->now();
       m.type =
           static_cast<std::uint8_t>(xiaocai_robot::common::IntentType::Chat);
       m.text = text;
-      intent->publish(m);
+      dialogue_command->publish(m);
     };
     auto wait_answer = [&](const char *expected) {
       const auto deadline = std::chrono::steady_clock::now() + 8s;
@@ -132,6 +128,10 @@ int main(int argc, char **argv) {
     xiaocai_msgs::msg::MusicState stopped;
     stopped.timestamp = node->now();
     music_state->publish(stopped);
+    spin_for(100ms);
+    std_msgs::msg::Int32 initial_volume;
+    initial_volume.data = volume;
+    volume_state->publish(initial_volume);
     spin_for(100ms);
     send("all_tools");
     spin_for(50ms);

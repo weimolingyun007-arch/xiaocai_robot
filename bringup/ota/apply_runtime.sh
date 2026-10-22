@@ -118,6 +118,7 @@ done
 for required in \
   resource/speech/wake_ack.wav \
   resource/audio/asound.conf \
+  resource/audio/boot_music.wav \
   resource/music/ncm_player_compat.cjs \
   resource/intent/intent_model.json \
   resource/display/idle.ppm \

@@ -93,7 +93,8 @@ DialogueController::DialogueController(DialogueSettings settings,
       alive_(std::make_shared<std::atomic<bool>>(true)), quiet_(false),
       loaded_(false), next_memory_request_id_(0), stopping_(false),
       hushed_(false), generation_(0), tool_id_(0), tool_volume_pending_(false),
-      tool_volume_result_(nullptr), music_sequence_(0), music_state_(),
+      tool_volume_result_(nullptr), volume_known_(false), volume_percent_(0),
+      music_sequence_(0), music_state_(),
       conversation_phase_(common::ConversationPhase::Idle),
       expect_reply_(false), audio_playing_(false), music_searching_(false),
       next_reply_id_(static_cast<std::uint64_t>(
@@ -128,21 +129,15 @@ void DialogueController::HandleIntent(common::IntentType type,
   }
   switch (type) {
   case common::IntentType::VolumeGet: {
-    if (!callbacks_.request_volume) {
-      Speak("音量查询服务暂时不可用。");
-      return;
+    int percent = 0;
+    bool available = false;
+    {
+      std::lock_guard<std::mutex> lock(tool_mutex_);
+      available = volume_known_;
+      percent = volume_percent_;
     }
-    const auto generation = generation_.load();
-    std::weak_ptr<std::atomic<bool>> alive = alive_;
-    callbacks_.request_volume(
-        [this, alive, generation](DialogueVolumeResult result) {
-          const auto active = alive.lock();
-          if (!active || !active->load() || IsGenerationCancelled(generation))
-            return;
-          Speak(result.ok
-                    ? "当前音量是百分之" + std::to_string(result.percent) + "。"
-                    : "音量查询服务暂时不可用。");
-        });
+    Speak(available ? "当前音量是百分之" + std::to_string(percent) + "。"
+                    : "音量查询暂时不可用。");
     return;
   }
   case common::IntentType::QuietOn:
@@ -211,14 +206,20 @@ void DialogueController::HandleSpeechAwake(bool awake) {
 }
 
 void DialogueController::HandleVolumeState(int percent) {
+  bool changed = false;
   {
     std::lock_guard<std::mutex> lock(tool_mutex_);
+    changed = volume_known_ && volume_percent_ != percent;
+    volume_known_ = true;
+    volume_percent_ = percent;
     if (tool_volume_pending_) {
       tool_volume_result_ = {{"ok", true}, {"percent", percent}};
       tool_cv_.notify_all();
       return;
     }
   }
+  if (!changed)
+    return;
   if (percent > 0)
     Speak("音量调到百分之" + std::to_string(percent) + "。");
   else {
@@ -260,18 +261,6 @@ void DialogueController::HandleAudioPlay(const std::string &path) {
 void DialogueController::HandleTimerTick() {
   if (!loaded_)
     RequestMemory(common::MemoryOperation::GetQuiet);
-}
-
-void DialogueController::HandleConversationTurn(bool expects_speech) {
-  if (hushed_.load())
-    return;
-  std::lock_guard<std::mutex> lock(conversation_mutex_);
-  if (!expects_speech) {
-    pending_replies_.clear();
-    SetConversation(common::ConversationPhase::Idle);
-  } else if (pending_replies_.empty()) {
-    SetConversation(common::ConversationPhase::Processing);
-  }
 }
 
 void DialogueController::HandleTtsResult(std::uint64_t request_id,
@@ -536,41 +525,12 @@ json DialogueController::ExecuteMemoryTool(common::MemoryOperation operation,
 }
 
 json DialogueController::QueryVolumeTool(std::uint64_t generation) {
-  struct ResponseState {
-    std::mutex mutex;
-    std::condition_variable condition;
-    bool received{false};
-    DialogueVolumeResult result;
-  };
-
   if (IsGenerationCancelled(generation))
     return Failure("cancelled");
-  if (!callbacks_.request_volume)
-    return Failure("volume service unavailable");
-
-  auto response = std::make_shared<ResponseState>();
-  callbacks_.request_volume([response](DialogueVolumeResult result) {
-    {
-      std::lock_guard<std::mutex> lock(response->mutex);
-      response->result = std::move(result);
-      response->received = true;
-    }
-    response->condition.notify_all();
-  });
-
-  std::unique_lock<std::mutex> lock(response->mutex);
-  const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (!response->received && !IsGenerationCancelled(generation) &&
-         std::chrono::steady_clock::now() < deadline)
-    response->condition.wait_for(lock, 100ms);
-  if (!response->received)
-    return Failure(IsGenerationCancelled(generation)
-                       ? "cancelled"
-                       : "volume service timeout");
-  if (!response->result.ok)
-    return Failure(response->result.error.empty() ? "volume service unavailable"
-                                                  : response->result.error);
-  return {{"ok", true}, {"percent", response->result.percent}};
+  std::lock_guard<std::mutex> lock(tool_mutex_);
+  if (!volume_known_)
+    return Failure("volume state unavailable");
+  return {{"ok", true}, {"percent", volume_percent_}};
 }
 
 json DialogueController::ExecuteTool(const std::string &name, const json &args,

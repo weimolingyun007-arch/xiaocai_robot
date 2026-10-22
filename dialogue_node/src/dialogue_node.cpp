@@ -14,7 +14,6 @@ DialogueNode::DialogueNode()
       readiness_publisher_(*this, "dialogue_node"), dialogue_controller_() {
   InitPublishers();
   InitSubscribers();
-  InitClients();
   InitController();
   InitTimers();
   PublishState(common::RobotState::Idle);
@@ -50,11 +49,12 @@ void DialogueNode::InitPublishers() {
 
 void DialogueNode::InitSubscribers() {
   int initialized_count = 0;
-  intent_subscriber_ = create_subscription<xiaocai_msgs::msg::Intent>(
-      "/xiaocai_robot/intent", 10,
-      [this](xiaocai_msgs::msg::Intent::SharedPtr message) {
-        OnIntentCallback(*message);
-      });
+  dialogue_command_subscriber_ =
+      create_subscription<xiaocai_msgs::msg::DialogueCommand>(
+          "/xiaocai_robot/dialogue/command", 10,
+          [this](xiaocai_msgs::msg::DialogueCommand::SharedPtr message) {
+            OnDialogueCommandCallback(*message);
+          });
   ++initialized_count;
   result_subscriber_ = create_subscription<xiaocai_msgs::msg::MemoryResult>(
       "/xiaocai_robot/memory/result", 10,
@@ -81,7 +81,7 @@ void DialogueNode::InitSubscribers() {
       });
   ++initialized_count;
   volume_state_subscriber_ = create_subscription<std_msgs::msg::Int32>(
-      "/xiaocai_robot/audio/volume/state", 10,
+      "/xiaocai_robot/audio/volume/state", rclcpp::QoS(1).transient_local(),
       [this](std_msgs::msg::Int32::SharedPtr message) {
         OnVolumeStateCallback(*message);
       });
@@ -98,12 +98,6 @@ void DialogueNode::InitSubscribers() {
         OnAudioPlayCallback(*message);
       });
   ++initialized_count;
-  turn_subscriber_ = create_subscription<xiaocai_msgs::msg::ConversationTurn>(
-      "/xiaocai_robot/dialogue/turn", 10,
-      [this](xiaocai_msgs::msg::ConversationTurn::SharedPtr message) {
-        OnConversationTurnCallback(*message);
-      });
-  ++initialized_count;
   tts_result_subscriber_ = create_subscription<xiaocai_msgs::msg::TtsResult>(
       "/xiaocai_robot/tts/result", 100,
       [this](xiaocai_msgs::msg::TtsResult::SharedPtr message) {
@@ -111,11 +105,6 @@ void DialogueNode::InitSubscribers() {
       });
   ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
-}
-
-void DialogueNode::InitClients() {
-  volume_get_client_ = create_client<xiaocai_msgs::srv::GetVolume>(
-      "/xiaocai_robot/audio/get_volume");
 }
 
 void DialogueNode::InitController() {
@@ -148,10 +137,6 @@ void DialogueNode::InitController() {
                                            std::uint64_t request_id) {
     PublishMusicCommand(action, query, request_id);
   };
-  callbacks.request_volume =
-      [this](DialogueCallbacks::VolumeResponseCallback callback) {
-        ClientVolume(std::move(callback));
-      };
   dialogue_controller_ = std::make_unique<DialogueController>(
       std::move(settings), log_manager_, std::move(callbacks));
 }
@@ -218,28 +203,8 @@ void DialogueNode::PublishMusicCommand(common::MusicAction action,
   music_command_publisher_->publish(message);
 }
 
-void DialogueNode::ClientVolume(
-    DialogueCallbacks::VolumeResponseCallback callback) {
-  if (!volume_get_client_->service_is_ready()) {
-    callback({false, 0, "volume service unavailable"});
-    return;
-  }
-  auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
-  request->timestamp = now();
-  volume_get_client_->async_send_request(
-      request,
-      [callback = std::move(callback)](
-          rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedFuture future) {
-        try {
-          const auto response = future.get();
-          callback({true, response->percent, {}});
-        } catch (const std::exception &error) {
-          callback({false, 0, error.what()});
-        }
-      });
-}
-
-void DialogueNode::OnIntentCallback(const xiaocai_msgs::msg::Intent &message) {
+void DialogueNode::OnDialogueCommandCallback(
+    const xiaocai_msgs::msg::DialogueCommand &message) {
   dialogue_controller_->HandleIntent(
       static_cast<common::IntentType>(message.type), message.text);
 }
@@ -290,11 +255,6 @@ void DialogueNode::OnMusicStateCallback(
 void DialogueNode::OnAudioPlayCallback(
     const xiaocai_msgs::msg::AudioPlay &message) {
   dialogue_controller_->HandleAudioPlay(message.path);
-}
-
-void DialogueNode::OnConversationTurnCallback(
-    const xiaocai_msgs::msg::ConversationTurn &message) {
-  dialogue_controller_->HandleConversationTurn(message.expects_speech);
 }
 
 void DialogueNode::OnTtsResultCallback(

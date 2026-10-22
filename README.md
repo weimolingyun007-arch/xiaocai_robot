@@ -64,7 +64,7 @@ bash bringup/scripts/start_all_node.sh
 | 工具名 | 本地执行方式 |
 | --- | --- |
 | `get_current_time` | C++ 读取板端系统时钟，返回北京时间、日期、星期；准确性依赖板端时钟 |
-| `get_volume` | 调用 `/xiaocai_robot/audio/get_volume` 服务 |
+| `get_volume` | 读取对话节点缓存的 `/xiaocai_robot/audio/volume/state` 最新值 |
 | `set_volume` | 发布 `/xiaocai_robot/audio/volume/command`，等待实际音量反馈；范围 0–150，超过100时语音和音乐一起增强，最多 +6 dB |
 | `control_music` | 发布 `MusicCommand`，等待 `music_node` 返回相同请求编号的状态；支持播放、暂停、继续、停止、上/下一首 |
 | `get_music_status` | 读取 `music_node` 最新播放状态、歌曲名和进度 |
@@ -130,15 +130,15 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/audio/volume/command`：音量设置和增减命令，类型为 `xiaocai_msgs/msg/VolumeCommand`
 - `/xiaocai_robot/speech/text`：唤醒后的语音识别文字
 - `/xiaocai_robot/speech/awake`：唤醒状态
-- `/xiaocai_robot/intent`：对话意图，类型为 `xiaocai_msgs/msg/Intent`，只承载闲聊、音量查询、免打扰开关和提醒澄清
+- `/xiaocai_robot/dialogue/command`：交给对话节点处理的意图，类型为 `xiaocai_msgs/msg/DialogueCommand`，只在闲聊、免打扰开关和提醒澄清等对话路径发布
 - `/xiaocai_robot/music/command`：音乐操作，类型为 `xiaocai_msgs/msg/MusicCommand`，字段 `action`、`query`、`request_id`
-- `/xiaocai_robot/dialogue/turn`：`ConversationTurn`，意图分流后说明本轮是否等待语音回复
 - `/xiaocai_robot/dialogue/state`：`ConversationState`，空闲、监听、处理中、回复中的会话阶段，以及是否等待用户补充
-- `/xiaocai_robot/tts/text`：无关联编号的普通合成文字（如音乐错误提示）
+- `/xiaocai_robot/tts/text`：无关联编号的普通合成文字（如音乐错误提示、音量查询结果）
 - `/xiaocai_robot/tts/request`：`TtsRequest`，对话回复文字和 `request_id`
 - `/xiaocai_robot/tts/result`：`TtsResult`，合成失败或实际播放结束后的关联结果；不能把 WAV 生成成功当成回复播完
 - `/xiaocai_robot/audio/result`：`AudioPlaybackResult`，WAV 路径及播放结果；取消、文件缺失或静默丢弃也回报失败
 - `/xiaocai_robot/audio/play`：待播放 WAV 路径，类型为 `xiaocai_msgs/msg/AudioPlay`；`path` 为空时停止播放并清空待播队列
+- `/xiaocai_robot/audio/startup_music`：`std_msgs/msg/Empty`；显示节点在核心节点全部就绪后发一次，音频节点播放柔和开机旋律，不解除语音待机静音
 - `/xiaocai_robot/state`：机器人状态，类型为 `xiaocai_msgs/msg/RobotState`，字段 `state`
 - `/xiaocai_robot/system/readiness`：核心节点初始化状态，类型为 `xiaocai_msgs/msg/NodeReadiness`；每个核心节点就绪后每秒发布一次，显示节点用它决定何时结束开机页
 - `/xiaocai_robot/memory/command`：记忆操作请求，类型为 `xiaocai_msgs/msg/MemoryCommand`，字段 `operation`、`request_id`、`content`、`delay_seconds`、`enabled`
@@ -147,9 +147,10 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/music/state`：音乐状态，类型为 `xiaocai_msgs/msg/MusicState`，字段 `state`、`song_id`、`title`、`artist`、`position_seconds`、`duration_seconds`、`error`、`request_id`
 - `/xiaocai_robot/music/login`：`MusicLogin`，需要授权时携带官方登录链接、加载标记和错误状态，屏幕优先显示二维码；不传递账号 token
 - `/xiaocai_robot/music/lyrics`：`MusicLyrics`，歌曲编号、标题、歌手、加载标记、每句开始秒数和文字；保留最近一首的完整时间线
-- `/xiaocai_robot/audio/get_volume`：读取当前音量的服务（`xiaocai_msgs/srv/GetVolume`）
+- `/xiaocai_robot/audio/volume/state`：`std_msgs/msg/Int32`，音频节点发布音量变化状态
+- `/xiaocai_robot/audio/get_volume`：`xiaocai_msgs/srv/GetVolume`，音量查询时由 `intent_node` 直接请求 `audio_io_node` 的当前音量
 
-`Intent.type` 使用 `uint8` 承载 `xiaocai_robot::common::IntentType` 的枚举值；该枚举只表示对话节点处理的闲聊、音量查询、免打扰开关和提醒澄清，名称和值定义在 `common/include/defination/intent_type.hpp`。音乐、音量调节、记忆和提醒创建分别通过 `MusicCommand`、`VolumeCommand`、`MemoryCommand` 传递，并使用 `MusicAction`、`VolumeAction`、`MemoryOperation` 表示操作类型；这些枚举定义在 `common/include/defination/`。`MusicCommand.request_id` 与 `MusicState.request_id` 使用 `uint64`；`0` 表示普通语音命令，音乐工具请求使用非零编号并由 `MusicState` 原样回传。除周期发布的 `BleStatus` 状态快照外，`xiaocai_msgs` 消息和服务请求的首字段均为 `builtin_interfaces/Time timestamp`，发送时填写本节点 ROS 时钟。
+`Intent.type` 使用 `uint8` 承载 `xiaocai_robot::common::IntentType` 的枚举值；该枚举包含闲聊、音量查询、免打扰开关和提醒澄清等可路由意图。聊天、免打扰开关和提醒澄清由 `DialogueCommand` 交给对话节点；音量查询由 `intent_node` 直接调用 `audio_io_node` 的 `GetVolume` 服务，并通过 TTS 文本话题播报结果，不经过对话节点。音乐、音量调节、记忆和提醒创建分别通过 `MusicCommand`、`VolumeCommand`、`MemoryCommand` 传递，并使用 `MusicAction`、`VolumeAction`、`MemoryOperation` 表示操作类型；这些枚举定义在 `common/include/defination/`。`MusicCommand.request_id` 与 `MusicState.request_id` 使用 `uint64`；`0` 表示普通语音命令，音乐工具请求使用非零编号并由 `MusicState` 原样回传。除周期发布的 `BleStatus` 状态快照外，自定义消息和服务请求部分的首字段均为 `builtin_interfaces/Time timestamp`，发送时填写本节点 ROS 时钟。
 
 所有机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。对话意图、音乐操作、音量操作和记忆操作使用各自的自定义命令消息，避免把无关业务参数混装在一个通用消息中。状态与操作枚举统一在 `common/include/defination/` 的 C++ 枚举中定义，由消息的整数型字段承载；`.msg` 不声明重复的枚举常量。除 `BleStatus` 外，每个自定义消息以及服务请求部分的首字段都是 `builtin_interfaces/Time timestamp`。自定义接口定义位于 `xiaocai_msgs/msg/` 与 `xiaocai_msgs/srv/`，由 `make build` 先生成，再编译依赖节点。
 
@@ -167,7 +168,7 @@ sudo bash bringup/ota/install_autostart.sh
 
 `MusicState.state` 的数值在 `common/include/defination/music_state.hpp` 定义：0 停止、1 搜索中、2 播放、3 暂停、4 错误。音乐状态话题支持保留最后一条消息，语音节点重启后也能获取播放状态。歌曲能否播放取决于开放平台和账号权限，节点只选择平台标记当前账号可播放的搜索结果。
 
-`display_node` 先启动并显示与待机表情同款的极简动画开机页。音频、语音识别、意图、对话、记忆、TTS 和音乐节点完成本地资源初始化后，在 `/xiaocai_robot/system/readiness` 定期发布就绪状态；所有核心节点就绪后，显示页自动切入机器人当前表情或歌词页。Wi-Fi 和蓝牙连接不阻塞开机。`dialogue_node` 根据唤醒、对话阶段和实际音频播放决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点可读取最近状态。
+`display_node` 先启动并显示与待机表情同款的极简动画开机页。音频、语音识别、意图、对话、记忆、TTS 和音乐节点完成本地资源初始化后，在 `/xiaocai_robot/system/readiness` 定期发布就绪状态；所有核心节点就绪后，音频节点播放一次柔和开机旋律，显示页切入机器人当前表情或歌词页。开机旋律不会解除语音待机静音，也不会把机器人状态切成“说话”。点击歌词页的下一首或上一首时，切歌搜索期间保持歌词页；用户唤醒后仍优先显示聆听和对话表情。Wi-Fi 和蓝牙连接不阻塞开机。`dialogue_node` 根据唤醒、对话阶段和实际语音播放决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点可读取最近状态。
 
 ### 同步歌词与会话完成
 

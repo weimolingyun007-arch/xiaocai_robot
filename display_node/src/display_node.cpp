@@ -28,7 +28,8 @@ DisplayNode::DisplayNode()
           display_config_.AssetDirectory(),
           display_config_.Settings().font_family)),
       robot_state_(common::RobotState::Idle), lyrics_presenter_(),
-      last_clock_update_(0.0), system_ready_(false) {
+      last_clock_update_(0.0), system_ready_(false),
+      startup_music_published_(false), music_page_override_until_(0.0) {
   display_window_->ShowStartup(StartupIndicators(SteadySeconds()),
                                SteadySeconds());
   InitPublishers();
@@ -49,6 +50,9 @@ void DisplayNode::InitPublishers() {
   volume_command_publisher_ =
       create_publisher<xiaocai_msgs::msg::VolumeCommand>(
           "/xiaocai_robot/audio/volume/silent_command", 10);
+  ++initialized_count;
+  startup_music_publisher_ = create_publisher<std_msgs::msg::Empty>(
+      "/xiaocai_robot/audio/startup_music", 10);
   ++initialized_count;
   LOG_INFO("Initialized {} publishers", initialized_count);
 }
@@ -81,7 +85,7 @@ void DisplayNode::InitSubscribers() {
       });
   ++initialized_count;
   volume_state_subscriber_ = create_subscription<std_msgs::msg::Int32>(
-      "/xiaocai_robot/audio/volume/state", 10,
+      "/xiaocai_robot/audio/volume/state", rclcpp::QoS(1).transient_local(),
       [this](std_msgs::msg::Int32::SharedPtr message) {
         OnVolumeStateCallback(*message);
       });
@@ -124,6 +128,8 @@ void DisplayNode::OnRobotStateCallback(
     return;
   }
   robot_state_ = static_cast<common::RobotState>(message.state);
+  if (robot_state_ == common::RobotState::Listening)
+    music_page_override_until_ = 0.0;
   RefreshDisplay();
 }
 
@@ -190,6 +196,9 @@ void DisplayNode::OnReadinessCallback(
 }
 
 void DisplayNode::PublishMusicCommand(common::MusicAction action) {
+  if (action == common::MusicAction::Next ||
+      action == common::MusicAction::Previous)
+    music_page_override_until_ = SteadySeconds() + 55.0;
   xiaocai_msgs::msg::MusicCommand message;
   message.timestamp = now();
   message.action = static_cast<std::uint8_t>(action);
@@ -203,6 +212,12 @@ void DisplayNode::PublishVolumeCommand(int percent) {
   message.action = static_cast<std::uint8_t>(common::VolumeAction::Set);
   message.percent = std::clamp(percent, 0, 150);
   volume_command_publisher_->publish(message);
+}
+
+void DisplayNode::PublishStartupMusic() {
+  startup_music_publisher_->publish(std_msgs::msg::Empty{});
+  startup_music_published_ = true;
+  LOG_INFO("Published startup music request");
 }
 
 void DisplayNode::RefreshVolume(double now) {
@@ -284,11 +299,16 @@ void DisplayNode::RefreshDisplay() {
   if (!system_ready_) {
     system_ready_ = true;
     LOG_INFO("Core nodes are ready; switching to the main display");
+    if (!startup_music_published_)
+      PublishStartupMusic();
   }
 
   const auto music = lyrics_presenter_.CurrentView(now);
+  const bool preserve_music_page = now < music_page_override_until_ &&
+                                   music.has_value() &&
+                                   robot_state_ == common::RobotState::Thinking;
   if (!display_window_->IsVolumeOverlayActive()) {
-    if (robot_state_ != common::RobotState::Idle) {
+    if (robot_state_ != common::RobotState::Idle && !preserve_music_page) {
       ShowRobotState(robot_state_);
     } else if (music) {
       display_window_->ShowMusic(*music);

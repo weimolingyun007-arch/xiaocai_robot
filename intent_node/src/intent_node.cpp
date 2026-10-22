@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <string>
 #include <type_traits>
@@ -94,14 +95,19 @@ IntentNode::IntentNode()
 
   InitPublishers();
   InitSubscribers();
+  InitClients();
   InitServers();
   readiness_publisher_.MarkReady();
 }
 
 void IntentNode::InitPublishers() {
   int initialized_count = 0;
-  intent_publisher_ =
-      create_publisher<xiaocai_msgs::msg::Intent>("/xiaocai_robot/intent", 10);
+  dialogue_command_publisher_ =
+      create_publisher<xiaocai_msgs::msg::DialogueCommand>(
+          "/xiaocai_robot/dialogue/command", 10);
+  ++initialized_count;
+  tts_text_publisher_ =
+      create_publisher<std_msgs::msg::String>("/xiaocai_robot/tts/text", 10);
   ++initialized_count;
   music_command_publisher_ = create_publisher<xiaocai_msgs::msg::MusicCommand>(
       "/xiaocai_robot/music/command", 10);
@@ -113,9 +119,6 @@ void IntentNode::InitPublishers() {
   memory_command_publisher_ =
       create_publisher<xiaocai_msgs::msg::MemoryCommand>(
           "/xiaocai_robot/memory/command", 10);
-  ++initialized_count;
-  turn_publisher_ = create_publisher<xiaocai_msgs::msg::ConversationTurn>(
-      "/xiaocai_robot/dialogue/turn", 10);
   ++initialized_count;
   LOG_INFO("Initialized {} publishers", initialized_count);
 }
@@ -131,6 +134,11 @@ void IntentNode::InitSubscribers() {
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
+void IntentNode::InitClients() {
+  volume_get_client_ = create_client<xiaocai_msgs::srv::GetVolume>(
+      "/xiaocai_robot/audio/get_volume");
+}
+
 void IntentNode::InitServers() {
   intent_correction_server_ = create_service<
       xiaocai_msgs::srv::SubmitIntentCorrection>(
@@ -141,6 +149,56 @@ void IntentNode::InitServers() {
           std::shared_ptr<xiaocai_msgs::srv::SubmitIntentCorrection::Response>
               response) {
         OnSubmitIntentCorrectionCallback(request, response);
+      });
+}
+
+void IntentNode::RequestVolumeQuery() {
+  if (!volume_get_client_->service_is_ready()) {
+    std_msgs::msg::String response;
+    response.data = "音量查询暂时不可用。";
+    tts_text_publisher_->publish(response);
+    return;
+  }
+  if (volume_query_pending_)
+    volume_get_client_->prune_pending_requests();
+  if (volume_query_timeout_timer_)
+    volume_query_timeout_timer_->cancel();
+  const auto generation = ++volume_query_generation_;
+  volume_query_pending_ = true;
+  volume_query_timeout_timer_ =
+      create_wall_timer(std::chrono::seconds(2), [this, generation] {
+        if (!volume_query_pending_ || generation != volume_query_generation_)
+          return;
+        volume_query_pending_ = false;
+        volume_get_client_->prune_pending_requests();
+        std_msgs::msg::String response;
+        response.data = "音量查询暂时不可用。";
+        tts_text_publisher_->publish(response);
+        volume_query_timeout_timer_->cancel();
+      });
+
+  auto request = std::make_shared<xiaocai_msgs::srv::GetVolume::Request>();
+  request->timestamp = now();
+  volume_get_client_->async_send_request(
+      request,
+      [this, generation](
+          rclcpp::Client<xiaocai_msgs::srv::GetVolume>::SharedFuture future) {
+        if (!volume_query_pending_ || generation != volume_query_generation_)
+          return;
+        volume_query_pending_ = false;
+        if (volume_query_timeout_timer_)
+          volume_query_timeout_timer_->cancel();
+        std_msgs::msg::String response;
+        try {
+          const auto result = future.get();
+          response.data =
+              result->percent >= 0 && result->percent <= 150
+                  ? "当前音量是百分之" + std::to_string(result->percent) + "。"
+                  : "音量查询暂时不可用。";
+        } catch (const std::exception &) {
+          response.data = "音量查询暂时不可用。";
+        }
+        tts_text_publisher_->publish(response);
       });
 }
 
@@ -181,26 +239,25 @@ void IntentNode::OnTextCallback(std_msgs::msg::String::SharedPtr message) {
   last_predicted_score_ = prediction.confidence;
   last_intent_at_ = std::chrono::steady_clock::now();
 
-  xiaocai_msgs::msg::ConversationTurn turn;
-  turn.timestamp = now();
-  turn.expects_speech = !std::holds_alternative<MusicIntent>(result.payload);
-  turn_publisher_->publish(turn);
-
   std::visit(
       [this, &result](const auto &intent) {
         using T = std::decay_t<decltype(intent)>;
         if constexpr (std::is_same_v<T, ChatIntent>) {
-          xiaocai_msgs::msg::Intent message;
+          xiaocai_msgs::msg::DialogueCommand message;
           message.timestamp = now();
           message.type = static_cast<std::uint8_t>(common::IntentType::Chat);
           message.text = result.normalized_text;
-          intent_publisher_->publish(message);
+          dialogue_command_publisher_->publish(message);
         } else if constexpr (std::is_same_v<T, DialogueIntent>) {
-          xiaocai_msgs::msg::Intent message;
+          if (intent.type == common::IntentType::VolumeGet) {
+            RequestVolumeQuery();
+            return;
+          }
+          xiaocai_msgs::msg::DialogueCommand message;
           message.timestamp = now();
           message.type = static_cast<std::uint8_t>(intent.type);
           message.text = result.normalized_text;
-          intent_publisher_->publish(message);
+          dialogue_command_publisher_->publish(message);
         } else if constexpr (std::is_same_v<T, MusicIntent>) {
           xiaocai_msgs::msg::MusicCommand message;
           message.timestamp = now();

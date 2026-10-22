@@ -15,6 +15,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <signal.h>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/int32.hpp>
 #include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <thread>
@@ -38,6 +39,7 @@ private:
   // ROS subscription callbacks.
   void
   OnAudioPlayCallback(const xiaocai_msgs::msg::AudioPlay::SharedPtr message);
+  void OnStartupMusicCallback(const std_msgs::msg::Empty::SharedPtr message);
   void OnVolumeCommandCallback(
       const xiaocai_msgs::msg::VolumeCommand::SharedPtr message,
       bool notify = true);
@@ -54,8 +56,9 @@ private:
   LogManager log_manager_;
   common::NodeReadinessPublisher readiness_publisher_;
   std::string capture_device_, playback_device_, beep_, silence_,
-      wake_ack_path_;
+      wake_ack_path_, startup_music_path_;
   int volume_percent_;
+  bool startup_music_queued_{false};
   std::atomic<bool> stop_, silenced_;
   std::atomic<pid_t> capture_pid_, playback_pid_;
   std::thread capture_, playback_;
@@ -69,6 +72,8 @@ private:
       playback_result_publisher_;
   rclcpp::Subscription<xiaocai_msgs::msg::AudioPlay>::SharedPtr
       play_subscriber_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+      startup_music_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::VolumeCommand>::SharedPtr
       volume_command_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::VolumeCommand>::SharedPtr

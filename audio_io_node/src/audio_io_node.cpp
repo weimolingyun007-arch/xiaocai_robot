@@ -27,6 +27,7 @@ AudioIoNode::AudioIoNode()
                                                     settings.playback_device);
   wake_ack_path_ =
       declare_parameter<std::string>("wake_ack_path", settings.wake_ack_path);
+  startup_music_path_ = audio_io_config_.StartupMusicPath().string();
   volume_percent_ = declare_parameter<int>(
       "volume_percent", static_cast<int>(settings.volume_percent));
   int adc_pga_gain = declare_parameter<int>(
@@ -41,7 +42,7 @@ AudioIoNode::AudioIoNode()
   MakeSilence();
   // Create the shared ALSA software-gain control with an inaudible zero PCM.
   Run({"aplay", "-q", "-D", playback_device_, silence_});
-  SetVolume(volume_percent_);
+  SetVolume(volume_percent_, true);
   Run({"amixer", "-c", "0", "set", "ADC PGA Gain",
        std::to_string(adc_pga_gain)});
   Run({"amixer", "-c", "0", "set", "MIC Boost Gain",
@@ -74,7 +75,7 @@ void AudioIoNode::InitPublishers() {
       create_publisher<std_msgs::msg::Bool>("/xiaocai_robot/audio/playing", 10);
   ++initialized_count;
   volume_state_publisher_ = create_publisher<std_msgs::msg::Int32>(
-      "/xiaocai_robot/audio/volume/state", 10);
+      "/xiaocai_robot/audio/volume/state", rclcpp::QoS(1).transient_local());
   ++initialized_count;
   playback_result_publisher_ =
       create_publisher<xiaocai_msgs::msg::AudioPlaybackResult>(
@@ -89,6 +90,12 @@ void AudioIoNode::InitSubscribers() {
       "/xiaocai_robot/audio/play", 10,
       [this](xiaocai_msgs::msg::AudioPlay::SharedPtr message) {
         OnAudioPlayCallback(message);
+      });
+  ++initialized_count;
+  startup_music_subscriber_ = create_subscription<std_msgs::msg::Empty>(
+      "/xiaocai_robot/audio/startup_music", 10,
+      [this](std_msgs::msg::Empty::SharedPtr message) {
+        OnStartupMusicCallback(message);
       });
   ++initialized_count;
   volume_command_subscriber_ =
@@ -158,6 +165,24 @@ void AudioIoNode::OnAudioPlayCallback(
     queue_.push_back(message->path);
   }
   cv_.notify_one();
+}
+
+void AudioIoNode::OnStartupMusicCallback(
+    const std_msgs::msg::Empty::SharedPtr) {
+  if (startup_music_queued_)
+    return;
+  if (access(startup_music_path_.c_str(), R_OK) != 0) {
+    LOG_ERROR("Missing startup music file: {}", startup_music_path_);
+    return;
+  }
+
+  startup_music_queued_ = true;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    queue_.push_back(startup_music_path_);
+  }
+  cv_.notify_one();
+  LOG_INFO("Queued startup music");
 }
 
 void AudioIoNode::OnVolumeCommandCallback(
@@ -328,7 +353,8 @@ void AudioIoNode::PlaybackLoop() {
       path = queue_.front();
       queue_.pop_front();
     }
-    if (silenced_.load()) {
+    const bool is_startup_music = path == startup_music_path_;
+    if (silenced_.load() && !is_startup_music) {
       if (path.rfind("/tmp/xiaocai_tts/", 0) == 0)
         unlink(path.c_str());
       PublishPlaybackResult(path, false);
@@ -342,13 +368,15 @@ void AudioIoNode::PlaybackLoop() {
       continue;
     }
     std_msgs::msg::Bool state;
-    state.data = true;
-    playing_publisher_->publish(state);
-    // Pause music synchronously before the wake response or spoken reply.
-    common::MpvCommand({"set_property", "pause", true});
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    if (!is_startup_music) {
+      state.data = true;
+      playing_publisher_->publish(state);
+      // Pause music synchronously before the wake response or spoken reply.
+      common::MpvCommand({"set_property", "pause", true});
+      std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    }
     int status = -1;
-    if (!silenced_.load()) {
+    if (!silenced_.load() || is_startup_music) {
       std::vector<std::string> arguments = {"aplay", "-q", "-D",
                                             playback_device_, path};
       std::vector<char *> argv;
@@ -364,7 +392,7 @@ void AudioIoNode::PlaybackLoop() {
         status = -1;
       else {
         playback_pid_.store(pid);
-        if (silenced_.load())
+        if (silenced_.load() && !is_startup_music)
           kill(pid, SIGTERM);
         int child_status = 0;
         while (waitpid(pid, &child_status, 0) < 0 && errno == EINTR) {
@@ -373,14 +401,17 @@ void AudioIoNode::PlaybackLoop() {
         status = WIFEXITED(child_status) ? WEXITSTATUS(child_status) : -1;
       }
     }
-    if (status && !silenced_.load())
+    if (status && (is_startup_music || !silenced_.load()))
       LOG_ERROR("aplay failed: {}", status);
     if (path.find("/tmp/xiaocai_tts/") == 0)
       unlink(path.c_str());
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    state.data = false;
-    playing_publisher_->publish(state);
-    PublishPlaybackResult(path, status == 0 && !silenced_.load());
+    if (!is_startup_music) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      state.data = false;
+      playing_publisher_->publish(state);
+    }
+    PublishPlaybackResult(path, status == 0 &&
+                                    (is_startup_music || !silenced_.load()));
   }
 }
 

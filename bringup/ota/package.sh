@@ -24,6 +24,7 @@ trap Cleanup EXIT
 payload="$temp_dir/xiaocai_robot"
 mkdir -p "$payload/bin" "$payload/config" "$payload/resource" "$payload/thirdparty" "$payload/msgs" "$payload/bringup/scripts" "$payload/bringup/systemd"
 install -D -m 0644 "$workspace/audio_io_node/assets/asound.conf" "$payload/resource/audio/asound.conf"
+install -D -m 0644 "$workspace/audio_io_node/assets/boot_music.wav" "$payload/resource/audio/boot_music.wav"
 install -D -m 0644 "$workspace/music_node/assets/ncm_player_compat.cjs" "$payload/resource/music/ncm_player_compat.cjs"
 install -D -m 0644 "$workspace/intent_node/assets/intent_model.json" "$payload/resource/intent/intent_model.json"
 for expression in idle listening thinking speaking quiet muted; do
@@ -157,6 +158,7 @@ BEGIN {
   if (count >= 4 && part[1] == "xiaocai_robot" && part[2] == "resource" && (part[3] == "speech" || part[3] == "tts")) { assets++; next }
   if (count == 4 && part[1] == "xiaocai_robot" && part[2] == "resource" && part[3] == "display" && part[4] ~ /^(idle|listening|thinking|speaking|quiet|muted)\.ppm$/) { display_assets++; next }
   if (path == "xiaocai_robot/resource/audio/asound.conf") { alsa_config++; next }
+  if (path == "xiaocai_robot/resource/audio/boot_music.wav") { boot_music++; next }
   if (path == "xiaocai_robot/resource/intent/intent_model.json") { intent_model++; next }
   print "Unexpected package entry: " path > "/dev/stderr"
   invalid=1
@@ -164,7 +166,7 @@ BEGIN {
 END {
   for (name in node) if (executable[name] != 1) { print "Missing executable: " name > "/dev/stderr"; invalid=1 }
   for (name in node) if (configs[name] != 1) { print "Missing node config: " name > "/dev/stderr"; invalid=1 }
-  if (libraries == 0 || interface_libraries == 0 || assets == 0 || display_assets != 6 || alsa_config != 1 || intent_model != 1 || music_compat != 1 || start_script != 1 || stop_script != 1 || service_unit != 1) { print "Missing runtime dependency, custom message library, asset, ALSA configuration, intent model, music compatibility adapter, bringup script, or systemd unit" > "/dev/stderr"; invalid=1 }
+  if (libraries == 0 || interface_libraries == 0 || assets == 0 || display_assets != 6 || alsa_config != 1 || boot_music != 1 || intent_model != 1 || music_compat != 1 || start_script != 1 || stop_script != 1 || service_unit != 1) { print "Missing runtime dependency, custom message library, asset, ALSA configuration, startup music, intent model, music compatibility adapter, bringup script, or systemd unit" > "/dev/stderr"; invalid=1 }
   if (invalid) exit 1
 }'; then
   echo "Package must contain only node executables, runtime libraries, model assets, bringup scripts, and the systemd unit." >&2

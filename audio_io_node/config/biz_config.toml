@@ -11,6 +11,7 @@ retention_days = 7
 capture_device = "hw:0,0"
 playback_device = "xiaocai_speaker"
 wake_ack_path = "/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"
+startup_music_path = "audio/boot_music.wav"
 volume_percent = 80
 adc_pga_gain = 9
 mic_boost_gain = 1
