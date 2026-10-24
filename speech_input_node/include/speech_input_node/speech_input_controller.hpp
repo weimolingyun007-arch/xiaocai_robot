@@ -57,6 +57,9 @@ private:
 
   void CollectSegments();
   void DecodeLoop();
+  void LoadAsrModel();
+  void ReleaseAsrModel();
+  void RequestAsrModel(bool should_load);
   void HandleText(const std::string &heard, bool was_armed);
   void ResetCapture();
   void EnterStandby();
@@ -78,6 +81,8 @@ private:
   std::deque<SpeechRecognitionResult> results_;
   std::mutex queue_mutex_;
   std::condition_variable queue_ready_;
+  bool asr_should_be_loaded_;
+  bool asr_load_attempted_;
   std::thread decoder_;
   bool stop_;
   bool playing_;
@@ -90,6 +95,7 @@ private:
   double inactivity_timeout_sec_;
   double ignore_until_;
   double armed_until_;
+  double wake_candidate_deadline_;
   double last_wake_time_;
   double listening_deadline_;
 };

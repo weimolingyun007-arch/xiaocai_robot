@@ -101,14 +101,15 @@ SpeechInputController::SpeechInputController(SpeechInputSettings settings,
       callbacks_(std::move(callbacks)), wake_model_(nullptr),
       wake_recognizer_(nullptr), asr_(nullptr), vad_(nullptr), vad_pending_(),
       recent_samples_(), samples_seen_(0), history_begin_(0), segments_(),
-      results_(), queue_mutex_(), queue_ready_(), decoder_(), stop_(false),
-      playing_(false), music_playing_(false), conversation_active_(false),
+      results_(), queue_mutex_(), queue_ready_(), asr_should_be_loaded_(false),
+      asr_load_attempted_(false), decoder_(), stop_(false), playing_(false),
+      music_playing_(false), conversation_active_(false),
       wake_candidate_(false), request_in_flight_(false),
       recognition_generation_(0),
       input_gain_(static_cast<float>(settings_.input_gain)),
       inactivity_timeout_sec_(settings_.inactivity_timeout_sec),
-      ignore_until_(0.0), armed_until_(0.0), last_wake_time_(0.0),
-      listening_deadline_(0.0) {
+      ignore_until_(0.0), armed_until_(0.0), wake_candidate_deadline_(0.0),
+      last_wake_time_(0.0), listening_deadline_(0.0) {
   if (!callbacks_.publish_text || !callbacks_.publish_audio_play ||
       !callbacks_.publish_awake)
     throw std::invalid_argument("SpeechInputController callbacks are required");
@@ -123,22 +124,6 @@ SpeechInputController::SpeechInputController(SpeechInputSettings settings,
       R"(["小蔡","小菜","小蔡 同学","小菜 同学","小蔡 小蔡","小菜 小菜","闭嘴","别说了","别说话","不要说话","停止说话","别讲话","[unk]"])");
   if (!wake_recognizer_)
     throw std::runtime_error("Cannot create wake recognizer");
-
-  SherpaOnnxOfflineRecognizerConfig asr_config{};
-  asr_config.feat_config.sample_rate = 16000;
-  asr_config.feat_config.feature_dim = 80;
-  asr_config.model_config.sense_voice.model =
-      settings_.sense_model_path.c_str();
-  asr_config.model_config.sense_voice.language = "zh";
-  asr_config.model_config.sense_voice.use_itn = 1;
-  asr_config.model_config.tokens = settings_.sense_tokens_path.c_str();
-  asr_config.model_config.num_threads = 2;
-  asr_config.model_config.provider = "cpu";
-  asr_config.decoding_method = "greedy_search";
-  asr_ = SherpaOnnxCreateOfflineRecognizer(&asr_config);
-  if (!asr_)
-    throw std::runtime_error("Cannot load SenseVoice model: " +
-                             settings_.sense_model_path);
 
   SherpaOnnxVadModelConfig vad_config{};
   vad_config.silero_vad.model = settings_.vad_model_path.c_str();
@@ -156,7 +141,7 @@ SpeechInputController::SpeechInputController(SpeechInputSettings settings,
                              settings_.vad_model_path);
 
   decoder_ = std::thread([this] { DecodeLoop(); });
-  LOG_INFO("Wake-only standby ready; SenseVoice runs after wake detection");
+  LOG_INFO("Wake-only standby ready; SenseVoice loads after wake detection");
 }
 
 SpeechInputController::~SpeechInputController() {
@@ -169,8 +154,7 @@ SpeechInputController::~SpeechInputController() {
     decoder_.join();
   if (vad_)
     SherpaOnnxDestroyVoiceActivityDetector(vad_);
-  if (asr_)
-    SherpaOnnxDestroyOfflineRecognizer(asr_);
+  ReleaseAsrModel();
   if (wake_recognizer_)
     vosk_recognizer_free(wake_recognizer_);
   if (wake_model_)
@@ -266,15 +250,23 @@ void SpeechInputController::HandleAudioData(
       AcknowledgeWake();
       return;
     }
-    if (FindWakeword(phrase) != std::string::npos)
+    if (FindWakeword(phrase) != std::string::npos) {
+      if (!wake_candidate_)
+        wake_candidate_deadline_ = Monotonic() + 15.0;
       wake_candidate_ = true;
+      RequestAsrModel(true);
+    }
   } else {
     const auto partial =
         Parse(vosk_recognizer_partial_result(wake_recognizer_));
     if (partial.is_object() &&
         FindWakeword(CompactText(partial.value("partial", std::string{}))) !=
-            std::string::npos)
+            std::string::npos) {
+      if (!wake_candidate_)
+        wake_candidate_deadline_ = Monotonic() + 15.0;
       wake_candidate_ = true;
+      RequestAsrModel(true);
+    }
   }
   CollectSegments();
 }
@@ -314,6 +306,14 @@ void SpeechInputController::HandleConversation(common::ConversationPhase phase,
     }
     listening_deadline_ = Monotonic() + settings_.followup_timeout_sec;
     armed_until_ = listening_deadline_;
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      if (!asr_should_be_loaded_) {
+        asr_should_be_loaded_ = true;
+        asr_load_attempted_ = false;
+      }
+    }
+    queue_ready_.notify_one();
     ignore_until_ = Monotonic() + 0.4;
     callbacks_.publish_awake(true);
     LOG_INFO("Listening for a follow-up answer for at most {:.0f} seconds",
@@ -324,6 +324,13 @@ void SpeechInputController::HandleConversation(common::ConversationPhase phase,
 }
 
 void SpeechInputController::DrainResults() {
+  if (wake_candidate_ && armed_until_ == 0 &&
+      Monotonic() >= wake_candidate_deadline_ && !request_in_flight_) {
+    wake_candidate_ = false;
+    wake_candidate_deadline_ = 0;
+    RequestAsrModel(false);
+  }
+
   // A hard deadline is independent of VAD activity and still expires if the
   // microphone stops producing data. Old ASR work cannot reopen this turn.
   if (listening_deadline_ > 0 && Monotonic() >= listening_deadline_) {
@@ -355,7 +362,10 @@ std::uint64_t SpeechInputController::AcknowledgeWake() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     segments_.clear();
     results_.clear();
+    asr_should_be_loaded_ = true;
+    asr_load_attempted_ = false;
   }
+  queue_ready_.notify_one();
   callbacks_.publish_awake(true);
   callbacks_.publish_audio_play(settings_.wake_ack_path);
   LOG_INFO("wakeword acknowledged");
@@ -369,12 +379,16 @@ void SpeechInputController::HandleRecognitionResult(
   request_in_flight_ = false;
   if (!result.text.empty())
     HandleText(result.text, result.was_armed);
+  if (!result.was_armed && armed_until_ == 0)
+    RequestAsrModel(false);
 }
 
 void SpeechInputController::CollectSegments() {
   while (!SherpaOnnxVoiceActivityDetectorEmpty(vad_)) {
     const auto *segment = SherpaOnnxVoiceActivityDetectorFront(vad_);
     const bool armed = Monotonic() < armed_until_;
+    const bool wake_candidate = wake_candidate_;
+    bool queued_segment = false;
     if (segment && segment->n >= 3200 && (armed || wake_candidate_) &&
         !request_in_flight_) {
       if (armed)
@@ -398,6 +412,7 @@ void SpeechInputController::CollectSegments() {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         segments_.push_back({std::move(audio), armed, recognition_generation_});
         request_in_flight_ = true;
+        queued_segment = true;
       }
       queue_ready_.notify_one();
     }
@@ -405,19 +420,53 @@ void SpeechInputController::CollectSegments() {
       SherpaOnnxDestroySpeechSegment(segment);
     SherpaOnnxVoiceActivityDetectorPop(vad_);
     wake_candidate_ = false;
+    wake_candidate_deadline_ = 0;
+    if (wake_candidate && !armed && !queued_segment && !request_in_flight_)
+      RequestAsrModel(false);
   }
 }
 
 void SpeechInputController::DecodeLoop() {
   while (true) {
     Segment segment;
+    bool load_asr = false;
+    bool release_asr = false;
+    bool has_segment = false;
     {
       std::unique_lock<std::mutex> lock(queue_mutex_);
-      queue_ready_.wait(lock, [this] { return stop_ || !segments_.empty(); });
+      queue_ready_.wait(lock, [this] {
+        return stop_ || !segments_.empty() ||
+               (asr_should_be_loaded_ && !asr_ && !asr_load_attempted_) ||
+               (!asr_should_be_loaded_ && asr_);
+      });
       if (stop_)
         return;
-      segment = std::move(segments_.front());
-      segments_.pop_front();
+      if (asr_should_be_loaded_ && !asr_ && !asr_load_attempted_) {
+        asr_load_attempted_ = true;
+        load_asr = true;
+      } else if (!asr_should_be_loaded_ && asr_) {
+        release_asr = true;
+      } else if (!segments_.empty()) {
+        segment = std::move(segments_.front());
+        segments_.pop_front();
+        has_segment = true;
+      }
+    }
+    if (load_asr) {
+      LoadAsrModel();
+      continue;
+    }
+    if (release_asr) {
+      ReleaseAsrModel();
+      continue;
+    }
+    if (!has_segment)
+      continue;
+
+    if (!asr_) {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      results_.push_back({{}, segment.was_armed, segment.generation});
+      continue;
     }
     const auto *stream = SherpaOnnxCreateOfflineStream(asr_);
     if (!stream) {
@@ -443,6 +492,45 @@ void SpeechInputController::DecodeLoop() {
       SherpaOnnxDestroyOfflineRecognizerResult(result);
     SherpaOnnxDestroyOfflineStream(stream);
   }
+}
+
+void SpeechInputController::LoadAsrModel() {
+  SherpaOnnxOfflineRecognizerConfig asr_config{};
+  asr_config.feat_config.sample_rate = 16000;
+  asr_config.feat_config.feature_dim = 80;
+  asr_config.model_config.sense_voice.model =
+      settings_.sense_model_path.c_str();
+  asr_config.model_config.sense_voice.language = "zh";
+  asr_config.model_config.sense_voice.use_itn = 1;
+  asr_config.model_config.tokens = settings_.sense_tokens_path.c_str();
+  asr_config.model_config.num_threads = 2;
+  asr_config.model_config.provider = "cpu";
+  asr_config.decoding_method = "greedy_search";
+  asr_ = SherpaOnnxCreateOfflineRecognizer(&asr_config);
+  if (!asr_) {
+    LOG_ERROR("Cannot load SenseVoice model: {}", settings_.sense_model_path);
+    return;
+  }
+  LOG_INFO("SenseVoice loaded for active listening");
+}
+
+void SpeechInputController::RequestAsrModel(bool should_load) {
+  {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    if (asr_should_be_loaded_ != should_load) {
+      asr_should_be_loaded_ = should_load;
+      asr_load_attempted_ = false;
+    }
+  }
+  queue_ready_.notify_one();
+}
+
+void SpeechInputController::ReleaseAsrModel() {
+  if (!asr_)
+    return;
+  SherpaOnnxDestroyOfflineRecognizer(asr_);
+  asr_ = nullptr;
+  LOG_INFO("SenseVoice unloaded; wake-only standby ready");
 }
 
 void SpeechInputController::HandleText(const std::string &heard,
@@ -490,6 +578,7 @@ void SpeechInputController::HandleText(const std::string &heard,
 
 void SpeechInputController::ResetCapture() {
   wake_candidate_ = false;
+  wake_candidate_deadline_ = 0;
   vosk_recognizer_reset(wake_recognizer_);
   SherpaOnnxVoiceActivityDetectorReset(vad_);
   vad_pending_.clear();
@@ -507,7 +596,10 @@ void SpeechInputController::EnterStandby() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     segments_.clear();
     results_.clear();
+    asr_should_be_loaded_ = false;
+    asr_load_attempted_ = false;
   }
+  queue_ready_.notify_one();
   callbacks_.publish_awake(false);
 }
 
