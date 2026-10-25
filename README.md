@@ -167,7 +167,7 @@ sudo bash bringup/ota/install_autostart.sh
 
 `MusicState.state` 的数值在 `common/include/defination/music_state.hpp` 定义：0 停止、1 搜索中、2 播放、3 暂停、4 错误。音乐状态话题支持保留最后一条消息，语音节点重启后也能获取播放状态。歌曲能否播放取决于开放平台和账号权限，节点只选择平台标记当前账号可播放的搜索结果。
 
-`display_node` 先启动并显示与待机表情同款的极简动画开机页。音频、语音识别、意图、对话、记忆、TTS 和音乐节点完成本地资源初始化后，在 `/xiaocai_robot/system/readiness` 定期发布就绪状态；所有核心节点就绪后，音频节点播放一次柔和开机旋律，显示页切入机器人当前表情或歌词页。开机旋律不会解除语音待机静音，也不会把机器人状态切成“说话”。点击歌词页的下一首或上一首时，切歌搜索期间保持歌词页；用户唤醒后仍优先显示聆听和对话表情。Wi-Fi 和蓝牙连接不阻塞开机。`dialogue_node` 根据唤醒、对话阶段和实际语音播放决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点可读取最近状态。
+`display_node` 先启动并显示与待机表情同款的极简动画开机页。音频、语音识别、意图、对话、记忆、TTS 和音乐节点完成本地资源初始化后，在 `/xiaocai_robot/system/readiness` 定期发布就绪状态；显示节点只在启动阶段等待所有核心节点首次就绪，切入运行页面后会保持运行态，不因思考期间的心跳延迟或节点忙碌而重新显示开机页。首次全部就绪后，音频节点播放一次柔和开机旋律，显示页切入机器人当前表情或歌词页。开机旋律不会解除语音待机静音，也不会把机器人状态切成“说话”。点击歌词页的下一首或上一首时，切歌搜索期间保持歌词页；用户唤醒后仍优先显示聆听和对话表情。Wi-Fi 和蓝牙连接不阻塞开机。`dialogue_node` 根据唤醒、对话阶段和实际语音播放决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点可读取最近状态。
 
 ### 同步歌词与会话完成
 

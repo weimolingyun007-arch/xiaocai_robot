@@ -291,12 +291,11 @@ void DisplayNode::ShowRobotState(common::RobotState state) {
 
 void DisplayNode::RefreshDisplay() {
   const double now = SteadySeconds();
-  if (!AreCoreNodesReady(now)) {
-    system_ready_ = false;
-    display_window_->ShowStartup(StartupIndicators(now), now);
-    return;
-  }
   if (!system_ready_) {
+    if (!AreCoreNodesReady(now)) {
+      display_window_->ShowStartup(StartupIndicators(now), now);
+      return;
+    }
     system_ready_ = true;
     LOG_INFO("Core nodes are ready; switching to the main display");
     if (!startup_music_published_)
