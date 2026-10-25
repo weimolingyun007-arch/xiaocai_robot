@@ -117,9 +117,8 @@ for module in "${modules[@]}"; do
 done
 for required in \
   resource/speech/wake_ack.wav \
-  resource/audio/asound.conf \
   resource/audio/boot_music.wav \
-  resource/music/ncm_player_compat.cjs \
+  config/music_node/ncm_player_compat.cjs \
   resource/intent/intent_model.json \
   resource/display/idle.ppm \
   resource/display/listening.ppm \
@@ -190,6 +189,24 @@ if [[ "$running" -ne "$total_modules" ]] || ! systemctl is-active --quiet "$serv
   echo "Only $running of $total_modules nodes are running; restoring previous workspace." >&2
   exit 1
 fi
+
+# Constructors may fail just after the process first appears in /proc. Require
+# the same service instance and all nodes to survive before accepting the update.
+started_main_pid="$(systemctl show "$service" --property=MainPID --value)"
+for attempt in 1 2 3; do
+  sleep 2
+  stable_main_pid="$(systemctl show "$service" --property=MainPID --value)"
+  if [[ "$stable_main_pid" != "$started_main_pid" ]] || ! systemctl is-active --quiet "$service"; then
+    echo "Service restarted during startup validation; restoring previous workspace." >&2
+    exit 1
+  fi
+  for module in "${modules[@]}"; do
+    if ! pgrep -f "^$workspace/bin/$module$" >/dev/null; then
+      echo "Node exited during startup validation: $module; restoring previous workspace." >&2
+      exit 1
+    fi
+  done
+done
 
 committed=1
 trap - EXIT

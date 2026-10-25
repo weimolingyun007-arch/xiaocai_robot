@@ -7,5 +7,8 @@
 /speech_input_node/assets/silero_vad.onnx
 /tts_node/assets/sherpa-onnx-vits-zh-ll/model.onnx
 
+# Local Gemma model weights (keep out of Git)
+/models/gemma4-E4B/gemma4-E4B_q4_0-it.gguf
+
 # Local API credentials
 /dialogue_node/.secrets/

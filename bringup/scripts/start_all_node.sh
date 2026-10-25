@@ -14,8 +14,6 @@ export ROS_LOG_DIR="${ROS_LOG_DIR:-/tmp/xiaocai_ros_logs}"
 mkdir -p "$ROS_LOG_DIR"
 source /opt/ros/humble/setup.bash
 export LD_LIBRARY_PATH="$workspace/msgs:$workspace/thirdparty/onnxruntime:$workspace/thirdparty/sherpa-onnx:$workspace/thirdparty/vosk:$workspace/thirdparty:${LD_LIBRARY_PATH:-}"
-export ALSA_CONFIG_PATH="$workspace/resource/audio/asound.conf"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require=$workspace/resource/music/ncm_player_compat.cjs"
 export XIAOCAI_CONFIG_ROOT="$workspace/config"
 export XIAOCAI_RESOURCE_ROOT="$workspace/resource"
 source "$workspace/resource/deepseek.env"

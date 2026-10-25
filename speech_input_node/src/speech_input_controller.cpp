@@ -1,6 +1,5 @@
 #include "speech_input_node/speech_input_controller.hpp"
 #include "common/common.hpp"
-#include "common/mpv.hpp"
 
 #include <algorithm>
 #include <array>
@@ -348,8 +347,7 @@ void SpeechInputController::DrainResults() {
 }
 
 std::uint64_t SpeechInputController::AcknowledgeWake() {
-  // Preserve the playlist and position for resumption after the dialogue.
-  common::MpvCommand({"set_property", "pause", true});
+  // music_node pauses playback when it receives the awake notification.
   listening_deadline_ = Monotonic() + inactivity_timeout_sec_;
   music_playing_ = false;
   conversation_active_ = true;
@@ -613,7 +611,6 @@ void SpeechInputController::AcceptRequest(const std::string &text) {
 
 void SpeechInputController::ReturnToWakeOnly() {
   conversation_active_ = false;
-  common::MpvCommand({"stop"});
   last_wake_time_ = Monotonic();
   EnterStandby();
   callbacks_.publish_audio_play({});

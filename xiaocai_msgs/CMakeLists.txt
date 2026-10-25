@@ -3,11 +3,15 @@ project(xiaocai_msgs)
 
 find_package(ament_cmake REQUIRED)
 find_package(builtin_interfaces REQUIRED)
+# Only the C/C++ and Python interfaces are used by this project. Some sysroots
+# also register an optional Rust generator with incompatible templates.
+set(CMAKE_DISABLE_FIND_PACKAGE_rosidl_generator_rs TRUE)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AudioPlay.msg"
   "msg/AudioPlaybackResult.msg"
+  "msg/AudioStream.msg"
   "msg/ConversationState.msg"
   "msg/DialogueCommand.msg"
   "msg/TtsRequest.msg"

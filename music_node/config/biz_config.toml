@@ -9,8 +9,11 @@ retention_days = 7
 
 [music]
 cli_path = "/usr/local/bin/ncm-cli"
-# Leave empty to use ~/.config/ncm-cli/mpv.sock.
-mpv_socket = ""
 default_keyword = "轻音乐"
-audio_device = "alsa/xiaocai_speaker"
+# ncm-cli decoder control socket. Empty uses ~/.config/ncm-cli/mpv.sock.
+mpv_socket = ""
+# The decoder writes raw PCM here; audio_io_node alone opens the sound card.
+pcm_fifo = "/tmp/xiaocai_music_node.pcm"
+sample_rate = 48000
+channels = 2
 wake_ack_path = "/home/lckfb/xiaocai_robot/resource/speech/wake_ack.wav"

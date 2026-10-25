@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     auto interrupt = node->create_publisher<xiaocai_msgs::msg::AudioPlay>(
         "/xiaocai_robot/audio/play", 10);
     auto volume_state = node->create_publisher<std_msgs::msg::Int32>(
-        "/xiaocai_robot/audio/volume/state", rclcpp::QoS(1).transient_local());
+        "/xiaocai_robot/audio/volume_state", rclcpp::QoS(1).transient_local());
     auto memory_result =
         node->create_publisher<xiaocai_msgs::msg::MemoryResult>(
             "/xiaocai_robot/memory/result", 10);
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
         "/xiaocai_robot/music/state", rclcpp::QoS(1).transient_local());
     auto volume_sub =
         node->create_subscription<xiaocai_msgs::msg::VolumeCommand>(
-            "/xiaocai_robot/audio/volume/command", 10,
+            "/xiaocai_robot/audio/volume_command", 10,
             [&](xiaocai_msgs::msg::VolumeCommand::SharedPtr m) {
               ++volume_commands;
               volume = m->action == 3

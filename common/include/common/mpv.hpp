@@ -4,6 +4,7 @@
 #include <cstring>
 #include <nlohmann/json.hpp>
 #include <poll.h>
+#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -17,7 +18,8 @@ inline std::string MusicSocket() {
 
 // Each connection has its own request id. Ignore asynchronous mpv events.
 inline nlohmann::json MpvCommand(const nlohmann::json &command,
-                                 const std::string &path = MusicSocket()) {
+                                 const std::string &path = MusicSocket(),
+                                 int timeout_ms = 2000) {
   const int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (fd < 0)
     return {};
@@ -38,7 +40,7 @@ inline nlohmann::json MpvCommand(const nlohmann::json &command,
       static_cast<ssize_t>(request.size()))
     return {};
   const auto until =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   std::string input;
   while (std::chrono::steady_clock::now() < until && input.size() < 65536) {
     const auto remaining =
@@ -63,6 +65,37 @@ inline nlohmann::json MpvCommand(const nlohmann::json &command,
     }
   }
   return {};
+}
+
+// Query playback properties in one core command. PCM file output writes large
+// blocks; repeated separate IPC queries contend with its audio lock.
+inline nlohmann::json
+MpvPlaybackSnapshot(const std::string &path = MusicSocket(),
+                    bool include_position = true) {
+  const char *expression =
+      include_position
+          ? "${=idle-active}|${=pause}|${=time-pos:0}|${=duration:0}"
+          : "${=idle-active}|${=pause}|0|${=duration:0}";
+  const auto response = MpvCommand({"expand-text", expression}, path);
+  if (!response.is_object() ||
+      response.value("error", std::string{}) != "success" ||
+      !response.contains("data") || !response["data"].is_string())
+    return {};
+  std::istringstream input(response["data"].get<std::string>());
+  std::string idle, pause, position, duration;
+  if (!std::getline(input, idle, '|') || !std::getline(input, pause, '|') ||
+      !std::getline(input, position, '|') || !std::getline(input, duration))
+    return {};
+  if ((idle != "yes" && idle != "no") || (pause != "yes" && pause != "no"))
+    return {};
+  try {
+    return {{"idle", idle == "yes"},
+            {"paused", pause == "yes"},
+            {"position", std::stod(position)},
+            {"duration", std::stod(duration)}};
+  } catch (const std::exception &) {
+    return {};
+  }
 }
 
 inline bool MpvOk(const nlohmann::json &response) {

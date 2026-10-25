@@ -6,6 +6,8 @@
 #include "music_node/music_controller.hpp"
 #include "music_node/music_login_manager.hpp"
 #include "music_node/music_lyrics_loader.hpp"
+#include <xiaocai_msgs/msg/audio_playback_result.hpp>
+#include <xiaocai_msgs/msg/audio_stream.hpp>
 #include <xiaocai_msgs/msg/music_login.hpp>
 
 #include <rclcpp/rclcpp.hpp>
@@ -37,6 +39,7 @@ private:
   void InitController();
 
   // ROS message publishing.
+  void PublishAudioStream(const AudioPcmFrame &frame);
   void PublishState(const MusicPlaybackStatus &status);
   void PublishSpeech(const std::string &text);
   void PublishLyrics(const MusicLyrics &lyrics);
@@ -55,6 +58,8 @@ private:
   LogManager log_manager_;
   common::NodeReadinessPublisher readiness_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MusicState>::SharedPtr state_publisher_;
+  rclcpp::Publisher<xiaocai_msgs::msg::AudioStream>::SharedPtr
+      stream_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MusicLogin>::SharedPtr login_publisher_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr tts_publisher_;
   rclcpp::Publisher<xiaocai_msgs::msg::MusicLyrics>::SharedPtr
@@ -67,6 +72,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr awake_subscriber_;
   rclcpp::Subscription<xiaocai_msgs::msg::ConversationState>::SharedPtr
       conversation_subscriber_;
+  rclcpp::Subscription<xiaocai_msgs::msg::AudioPlaybackResult>::SharedPtr
+      audio_result_subscriber_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::unique_ptr<MusicController> music_controller_;
   std::unique_ptr<MusicLyricsLoader> lyrics_loader_;

@@ -49,7 +49,7 @@ void DisplayNode::InitPublishers() {
   ++initialized_count;
   volume_command_publisher_ =
       create_publisher<xiaocai_msgs::msg::VolumeCommand>(
-          "/xiaocai_robot/audio/volume/silent_command", 10);
+          "/xiaocai_robot/audio/volume_silent_command", 10);
   ++initialized_count;
   startup_music_publisher_ = create_publisher<std_msgs::msg::Empty>(
       "/xiaocai_robot/audio/startup_music", 10);
@@ -60,7 +60,7 @@ void DisplayNode::InitPublishers() {
 void DisplayNode::InitSubscribers() {
   int initialized_count = 0;
   robot_state_subscriber_ = create_subscription<xiaocai_msgs::msg::RobotState>(
-      "/xiaocai_robot/state", rclcpp::QoS(1).transient_local(),
+      "/xiaocai_robot/system/state", rclcpp::QoS(1).transient_local(),
       [this](xiaocai_msgs::msg::RobotState::SharedPtr message) {
         OnRobotStateCallback(*message);
       });
@@ -85,7 +85,7 @@ void DisplayNode::InitSubscribers() {
       });
   ++initialized_count;
   volume_state_subscriber_ = create_subscription<std_msgs::msg::Int32>(
-      "/xiaocai_robot/audio/volume/state", rclcpp::QoS(1).transient_local(),
+      "/xiaocai_robot/audio/volume_state", rclcpp::QoS(1).transient_local(),
       [this](std_msgs::msg::Int32::SharedPtr message) {
         OnVolumeStateCallback(*message);
       });

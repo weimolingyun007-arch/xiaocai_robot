@@ -114,7 +114,7 @@ void IntentNode::InitPublishers() {
   ++initialized_count;
   volume_command_publisher_ =
       create_publisher<xiaocai_msgs::msg::VolumeCommand>(
-          "/xiaocai_robot/audio/volume/command", 10);
+          "/xiaocai_robot/audio/volume_command", 10);
   ++initialized_count;
   memory_command_publisher_ =
       create_publisher<xiaocai_msgs::msg::MemoryCommand>(

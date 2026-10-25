@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <spawn.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -58,6 +59,18 @@ bool SameSongTitle(const std::string &left, const std::string &right) {
   return !a.empty() && !b.empty() && (a.rfind(b, 0) == 0 || b.rfind(a, 0) == 0);
 }
 
+bool IsGenericMusicQuery(const std::string &query) {
+  if (query.empty())
+    return true;
+  for (const auto *phrase :
+       {"任意一首音乐", "任意一首歌", "随便一首音乐", "随便一首歌",
+        "随便来一首", "随便放首歌", "一首音乐", "一首歌", "音乐", "歌曲"}) {
+    if (query == phrase)
+      return true;
+  }
+  return false;
+}
+
 bool IsPlayableSong(const json &song) {
   return song.is_object() && song.value("playFlag", false) &&
          song.contains("originalId") && !song["originalId"].is_null() &&
@@ -68,6 +81,11 @@ bool IsPlayableSong(const json &song) {
 std::string OriginalSongId(const json &song) {
   return song["originalId"].is_string() ? song["originalId"].get<std::string>()
                                         : song["originalId"].dump();
+}
+double SongDurationSeconds(const json &song) {
+  if (!song.contains("duration") || !song["duration"].is_number())
+    return 0;
+  return std::max(0.0, song["duration"].get<double>() / 1000.0);
 }
 } // namespace
 
@@ -139,15 +157,34 @@ MusicController::MusicController(MusicSettings settings,
                                  LogManager &log_manager,
                                  StatusCallback status_callback,
                                  SpeechCallback speech_callback,
-                                 LoginCallback login_callback)
+                                 LoginCallback login_callback,
+                                 AudioOutputCallback audio_output_callback)
     : settings_(std::move(settings)), log_manager_(log_manager),
       status_callback_(std::move(status_callback)),
       speech_callback_(std::move(speech_callback)),
-      login_callback_(std::move(login_callback)), stop_(false),
+      login_callback_(std::move(login_callback)),
+      audio_output_callback_(std::move(audio_output_callback)), stop_(false),
       silenced_(false), voice_playing_(false), busy_(false),
       last_voice_at_(0.0), last_conversation_at_(0.0), awake_(false),
       conversation_active_(false), resume_after_dialogue_(false),
       manually_paused_(true), revision_(0), backend_fd_(-1) {
+  if (mkfifo(settings_.pcm_fifo.c_str(), 0600) != 0 && errno != EEXIST)
+    throw std::runtime_error("Cannot create music PCM FIFO");
+  struct stat fifo {};
+  if (lstat(settings_.pcm_fifo.c_str(), &fifo) != 0 ||
+      !S_ISFIFO(fifo.st_mode) || fifo.st_uid != geteuid())
+    throw std::runtime_error("Invalid music PCM FIFO");
+  pcm_stream_id_ = static_cast<std::uint64_t>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  if (audio_output_callback_) {
+    pcm_fd_ =
+        open(settings_.pcm_fifo.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (pcm_fd_ < 0)
+      throw std::runtime_error("Cannot open decoder PCM FIFO");
+    fcntl(pcm_fd_, F_SETPIPE_SZ, 4096);
+    pcm_reader_ = std::thread([this] { PcmReaderLoop(); });
+    pcm_publisher_ = std::thread([this] { PcmPublishLoop(); });
+  }
   SetPlaybackStatus(State::Stopped);
   worker_ = std::thread([this] { WorkerLoop(); });
 }
@@ -156,10 +193,18 @@ MusicController::~MusicController() {
   stop_ = true;
   ++revision_;
   ready_.notify_all();
+  pcm_ready_.notify_all();
   if (worker_.joinable())
     worker_.join();
-  common::MpvCommand({"stop"}, settings_.mpv_socket);
+  StopPcmDecoder();
   CloseBackendSubscription();
+  if (pcm_reader_.joinable())
+    pcm_reader_.join();
+  if (pcm_publisher_.joinable())
+    pcm_publisher_.join();
+  if (pcm_fd_ >= 0)
+    close(pcm_fd_);
+  unlink(settings_.pcm_fifo.c_str());
 }
 
 void MusicController::HandleMusicCommand(common::MusicAction action,
@@ -174,15 +219,19 @@ void MusicController::HandleMusicCommand(common::MusicAction action,
   if (action == common::MusicAction::Play ||
       action == common::MusicAction::Next ||
       action == common::MusicAction::Previous) {
-    common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
+    PausePcmStream(true);
+    if (!audio_output_callback_)
+      common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
     SetPlaybackStatus(State::Searching, {}, request_id);
   }
   if (action == common::MusicAction::Stop ||
       action == common::MusicAction::Pause) {
-    common::MpvCommand(action == common::MusicAction::Stop
-                           ? json{"stop"}
-                           : json{"set_property", "pause", true},
-                       settings_.mpv_socket);
+    PausePcmStream(true);
+    if (!audio_output_callback_)
+      common::MpvCommand(action == common::MusicAction::Stop
+                             ? json{"stop"}
+                             : json{"set_property", "pause", true},
+                         settings_.mpv_socket);
   }
   {
     std::lock_guard<std::mutex> lock(jobs_mutex_);
@@ -204,7 +253,8 @@ void MusicController::HandleAudioPlay(const std::string &path) {
       std::lock_guard<std::mutex> lock(jobs_mutex_);
       jobs_.clear();
     }
-    common::MpvCommand({"stop"}, settings_.mpv_socket);
+    PausePcmStream(true);
+    StopPcmDecoder();
     CloseBackendSubscription();
     SetPlaybackStatus(State::Stopped);
     LOG_INFO("Hush: music stopped and pending requests cancelled");
@@ -213,7 +263,9 @@ void MusicController::HandleAudioPlay(const std::string &path) {
       silenced_ = false;
     }
     last_voice_at_ = Monotonic();
-    common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
+    PausePcmStream(true);
+    if (!audio_output_callback_)
+      common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
   }
 }
 
@@ -241,7 +293,9 @@ void MusicController::HandleSpeechAwake(bool awake) {
     std::lock_guard<std::mutex> lock(jobs_mutex_);
     jobs_.clear();
   }
-  common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
+  PausePcmStream(true);
+  if (!audio_output_callback_)
+    common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
 }
 
 void MusicController::HandleConversation(common::ConversationPhase phase) {
@@ -251,31 +305,37 @@ void MusicController::HandleConversation(common::ConversationPhase phase) {
 
 void MusicController::HandleStateUpdate() {
   MaintainBackendSubscription();
-  auto idle =
-      common::MpvCommand({"get_property", "idle-active"}, settings_.mpv_socket);
-  if (!common::MpvOk(idle))
-    return;
-  if (silenced_ && !idle.value("data", true)) {
-    common::MpvCommand({"stop"}, settings_.mpv_socket);
-    SetPlaybackStatus(State::Stopped);
+  if (audio_output_callback_) {
+    HandlePcmStateUpdate();
     return;
   }
-  auto device = common::MpvCommand({"get_property", "audio-device"},
-                                   settings_.mpv_socket);
-  if (common::MpvOk(device) &&
-      device.value("data", std::string{}) != settings_.audio_device)
-    common::MpvCommand({"set_property", "audio-device", settings_.audio_device},
-                       settings_.mpv_socket);
   if (busy_) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     if (status_.state == State::Searching)
       return;
   }
+  auto snapshot = common::MpvPlaybackSnapshot(settings_.mpv_socket,
+                                              !audio_output_callback_);
+  if (!snapshot.is_object() || snapshot.empty())
+    return;
+  if (silenced_ && !snapshot.value("idle", true)) {
+    common::MpvCommand({"stop"}, settings_.mpv_socket);
+    SetPlaybackStatus(State::Stopped);
+    return;
+  }
+  bool pcm_active = false;
+  double pcm_position = 0;
+  if (audio_output_callback_) {
+    std::lock_guard<std::mutex> lock(pcm_mutex_);
+    pcm_active = pcm_active_;
+    pcm_position = pcm_position_;
+  }
   bool advance = false;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    advance = idle.value("data", true) && status_.state == State::Playing &&
-              !playlist_.empty() && !manually_paused_ && !busy_;
+    advance = snapshot.value("idle", true) && !pcm_active &&
+              status_.state == State::Playing && !playlist_.empty() &&
+              !manually_paused_ && !busy_;
   }
   if (advance) {
     HandleMusicCommand(common::MusicAction::Next, {}, 0);
@@ -284,42 +344,253 @@ void MusicController::HandleStateUpdate() {
   if (resume_after_dialogue_ && !awake_ && !conversation_active_ &&
       !voice_playing_ && !silenced_ && Monotonic() - last_voice_at_ > 0.8 &&
       Monotonic() - last_conversation_at_ > 0.8) {
-    if (idle.value("data", true)) {
+    if (snapshot.value("idle", true)) {
       resume_after_dialogue_ = false;
-    } else if (common::MpvOk(common::MpvCommand(
-                   {"set_property", "pause", false}, settings_.mpv_socket))) {
-      resume_after_dialogue_ = false;
-      LOG_INFO("Dialogue finished; music resumed at the saved position");
+    } else {
+      PausePcmStream(false);
+      if (common::MpvOk(common::MpvCommand({"set_property", "pause", false},
+                                           settings_.mpv_socket))) {
+        resume_after_dialogue_ = false;
+        LOG_INFO("Dialogue finished; music resumed at the saved position");
+      }
     }
   }
-  auto pause =
-      common::MpvCommand({"get_property", "pause"}, settings_.mpv_socket);
-  if (!common::MpvOk(pause))
-    return;
-  auto position =
-      common::MpvCommand({"get_property", "time-pos"}, settings_.mpv_socket);
-  auto duration =
-      common::MpvCommand({"get_property", "duration"}, settings_.mpv_socket);
   std::lock_guard<std::mutex> lock(state_mutex_);
   if (status_.state == State::Error)
     return;
-  status_.state = idle.value("data", true)    ? State::Stopped
-                  : pause.value("data", true) ? State::Paused
-                                              : State::Playing;
+  status_.state = snapshot.value("idle", true) && !pcm_active ? State::Stopped
+                  : snapshot.value("paused", true)            ? State::Paused
+                                                              : State::Playing;
   status_.position_seconds =
-      common::MpvOk(position) && position["data"].is_number()
-          ? position["data"].get<double>()
-          : 0;
-  status_.duration_seconds =
-      common::MpvOk(duration) && duration["data"].is_number()
-          ? duration["data"].get<double>()
-          : 0;
+      audio_output_callback_ ? pcm_position : snapshot.value("position", 0.0);
+  if (snapshot.value("duration", 0.0) > 0)
+    status_.duration_seconds = snapshot.value("duration", 0.0);
   if (status_.state == State::Stopped) {
     status_.song_id.clear();
     status_.title.clear();
     status_.artist.clear();
   }
   status_callback_(status_);
+}
+
+// This FIFO is private to music_node and its decoder. ROS carries the bytes.
+void MusicController::ResetPcmStream(bool active) {
+  if (!audio_output_callback_)
+    return;
+  std::lock_guard<std::mutex> lock(pcm_mutex_);
+  AudioPcmFrame cancel;
+  cancel.action = common::AudioStreamAction::Cancel;
+  cancel.stream_id = pcm_stream_id_;
+  cancel.sequence = pcm_sequence_++;
+  audio_output_callback_(cancel);
+  ++pcm_stream_id_;
+  pcm_sequence_ = 0;
+  pcm_active_ = active;
+  pcm_paused_ = false;
+  pcm_eof_ = false;
+  pcm_position_ = 0;
+  pcm_queue_.clear();
+  ++pcm_generation_;
+  // MPV acknowledges stop before its AO thread necessarily closes the FIFO.
+  // Drain through EAGAIN until the previous writer really closes, otherwise
+  // its last samples/EOF could be mistaken for the next track's stream.
+  std::uint8_t discarded[4096];
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  bool writer_closed = false;
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto count = read(pcm_fd_, discarded, sizeof(discarded));
+    if (count == 0) {
+      writer_closed = true;
+      break;
+    }
+    if (count < 0 && errno != EINTR && errno != EAGAIN)
+      break;
+    if (count < 0 && errno == EAGAIN) {
+      pollfd descriptor{pcm_fd_, POLLIN, 0};
+      poll(&descriptor, 1, 10);
+    }
+  }
+  pcm_ready_.notify_all();
+  if (active && !writer_closed) {
+    pcm_active_ = false;
+    throw std::runtime_error("Previous decoder PCM writer did not close");
+  }
+}
+
+void MusicController::HandleAudioOutputFailure(std::uint64_t stream_id) {
+  {
+    std::lock_guard<std::mutex> lock(pcm_mutex_);
+    if (!pcm_active_ || stream_id != pcm_stream_id_)
+      return;
+  }
+  ++revision_;
+  manually_paused_ = true;
+  resume_after_dialogue_ = false;
+  StopPcmDecoder();
+  SetPlaybackStatus(State::Error, "音频设备输出失败，请稍后再试。");
+}
+
+void MusicController::StopPcmDecoder(bool next_stream) {
+  // Queue stop without waiting for the decoder's large PCM write. Reset drains
+  // that write and waits for the writer to close before another track starts.
+  common::MpvCommand({"stop"}, settings_.mpv_socket,
+                     audio_output_callback_ ? 100 : 2000);
+  ResetPcmStream(next_stream);
+}
+
+void MusicController::HandlePcmStateUpdate() {
+  if (busy_) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (status_.state == State::Searching)
+      return;
+  }
+  bool active, paused, eof;
+  double position;
+  {
+    std::lock_guard<std::mutex> lock(pcm_mutex_);
+    active = pcm_active_;
+    paused = pcm_paused_;
+    eof = pcm_eof_;
+    position = pcm_position_;
+  }
+  if (resume_after_dialogue_ && !awake_ && !conversation_active_ &&
+      !voice_playing_ && !silenced_ && Monotonic() - last_voice_at_ > 0.8 &&
+      Monotonic() - last_conversation_at_ > 0.8) {
+    resume_after_dialogue_ = false;
+    if (active) {
+      PausePcmStream(false);
+      paused = false;
+      LOG_INFO("Dialogue finished; music PCM resumed at the saved position");
+    }
+  }
+  bool advance;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    advance = eof && !active && status_.state == State::Playing &&
+              !playlist_.empty() && !manually_paused_ && !busy_;
+  }
+  if (advance) {
+    HandleMusicCommand(common::MusicAction::Next, {}, 0);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (status_.state == State::Error || status_.state == State::Searching)
+    return;
+  status_.state =
+      active ? (paused ? State::Paused : State::Playing) : State::Stopped;
+  status_.position_seconds = position;
+  if (status_.state == State::Stopped) {
+    status_.song_id.clear();
+    status_.title.clear();
+    status_.artist.clear();
+  }
+  status_callback_(status_);
+}
+
+void MusicController::PausePcmStream(bool paused) {
+  if (!audio_output_callback_)
+    return;
+  std::lock_guard<std::mutex> lock(pcm_mutex_);
+  if (paused && !pcm_paused_ && pcm_active_) {
+    AudioPcmFrame cancel;
+    cancel.action = common::AudioStreamAction::Cancel;
+    cancel.stream_id = pcm_stream_id_++;
+    cancel.sequence = pcm_sequence_;
+    pcm_sequence_ = 0;
+    audio_output_callback_(cancel);
+  }
+  pcm_paused_ = paused;
+  pcm_ready_.notify_all();
+}
+
+void MusicController::PcmReaderLoop() {
+  const std::size_t frame_bytes =
+      (settings_.sample_rate / 50) * settings_.channels * 2;
+  std::vector<std::uint8_t> pending;
+  pending.reserve(frame_bytes);
+  std::uint64_t generation = 0;
+  bool had_data = false;
+  while (!stop_) {
+    std::unique_lock<std::mutex> lock(pcm_mutex_);
+    pcm_ready_.wait(lock, [this] {
+      // Bound decoder read-ahead; pausing the sender naturally backpressures
+      // MPV without depending on its control IPC during a blocking write.
+      return stop_ || (pcm_active_ && !pcm_eof_ && pcm_queue_.size() < 96);
+    });
+    if (stop_)
+      return;
+    if (generation != pcm_generation_) {
+      generation = pcm_generation_;
+      pending.clear();
+      had_data = false;
+    }
+    std::vector<std::uint8_t> bytes(frame_bytes - pending.size());
+    const auto count = read(pcm_fd_, bytes.data(), bytes.size());
+    if (count > 0) {
+      pending.insert(pending.end(), bytes.begin(), bytes.begin() + count);
+      had_data = true;
+    }
+    const bool ended = count == 0 && had_data;
+    if (pending.size() == frame_bytes || (ended && !pending.empty())) {
+      pending.resize(pending.size() / (settings_.channels * 2) *
+                     (settings_.channels * 2));
+      pcm_queue_.emplace_back();
+      pcm_queue_.back().swap(pending);
+      pcm_ready_.notify_all();
+    } else if (!ended) {
+      pcm_ready_.wait_for(lock, std::chrono::milliseconds(2),
+                          [this, generation] {
+                            return stop_ || pcm_generation_ != generation;
+                          });
+    }
+    if (ended) {
+      pcm_eof_ = true;
+      pcm_ready_.notify_all();
+    }
+  }
+}
+
+void MusicController::PcmPublishLoop() {
+  auto next_frame = std::chrono::steady_clock::now();
+  std::uint64_t generation = 0;
+  while (!stop_) {
+    std::unique_lock<std::mutex> lock(pcm_mutex_);
+    pcm_ready_.wait(lock, [this] {
+      return stop_ ||
+             (pcm_active_ && !pcm_paused_ && (!pcm_queue_.empty() || pcm_eof_));
+    });
+    if (stop_)
+      return;
+    if (generation != pcm_generation_) {
+      generation = pcm_generation_;
+      next_frame = std::chrono::steady_clock::now();
+    }
+    pcm_ready_.wait_until(lock, next_frame, [this, generation] {
+      return stop_ || !pcm_active_ || pcm_paused_ ||
+             pcm_generation_ != generation;
+    });
+    if (stop_ || !pcm_active_ || pcm_paused_ || pcm_generation_ != generation)
+      continue;
+    AudioPcmFrame frame;
+    frame.stream_id = pcm_stream_id_;
+    frame.sequence = pcm_sequence_++;
+    frame.sample_rate = settings_.sample_rate;
+    frame.channels = settings_.channels;
+    if (pcm_queue_.empty()) {
+      frame.action = common::AudioStreamAction::End;
+      pcm_active_ = false;
+    } else {
+      frame.data = std::move(pcm_queue_.front());
+      pcm_queue_.pop_front();
+      pcm_position_ += static_cast<double>(frame.data.size()) /
+                       (settings_.sample_rate * settings_.channels * 2);
+    }
+    audio_output_callback_(frame);
+    next_frame = std::max(next_frame + std::chrono::milliseconds(20),
+                          std::chrono::steady_clock::now());
+    pcm_ready_.notify_all();
+  }
 }
 
 void MusicController::WorkerLoop() {
@@ -350,9 +621,11 @@ void MusicController::ExecuteJob(const Job &job) {
   using Action = common::MusicAction;
   if (job.action == Action::Play) {
     SetPlaybackStatus(State::Searching, {}, job.request_id);
-    common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
+    PausePcmStream(true);
+    if (!audio_output_callback_)
+      common::MpvCommand({"set_property", "pause", true}, settings_.mpv_socket);
     const std::string keyword =
-        job.query.empty() ? settings_.default_keyword : job.query;
+        IsGenericMusicQuery(job.query) ? settings_.default_keyword : job.query;
     auto search = RunCliCommand(
         {"search", "song", "--keyword", keyword, "--output", "json"},
         job.revision);
@@ -425,7 +698,8 @@ void MusicController::ExecuteJob(const Job &job) {
     }
     {
       std::lock_guard<std::mutex> lock(state_mutex_);
-      playlist_ = {{TrackFromSong(*selected), OriginalSongId(*selected)}};
+      playlist_ = {{TrackFromSong(*selected), OriginalSongId(*selected),
+                    SongDurationSeconds(*selected)}};
       playlist_index_ = 0;
     }
     AppendPlaylist(songs);
@@ -439,12 +713,27 @@ void MusicController::ExecuteJob(const Job &job) {
   } else if (job.action == Action::Resume) {
     if (!WaitForSpeechToFinish(job.revision))
       return;
+    if (audio_output_callback_) {
+      bool active;
+      {
+        std::lock_guard<std::mutex> lock(pcm_mutex_);
+        active = pcm_active_;
+      }
+      if (!active) {
+        FailJob(job, "还没有可继续播放的音乐，请先点歌。");
+        return;
+      }
+      PausePcmStream(false);
+      SetPlaybackStatus(State::Playing, {}, job.request_id);
+      return;
+    }
     auto idle = common::MpvCommand({"get_property", "idle-active"},
                                    settings_.mpv_socket);
     if (!common::MpvOk(idle) || idle.value("data", true)) {
       FailJob(job, "还没有可继续播放的音乐，请先点歌。");
       return;
     }
+    PausePcmStream(false);
     if (!common::MpvOk(common::MpvCommand({"set_property", "pause", false},
                                           settings_.mpv_socket)))
       FailJob(job, "音乐暂时无法继续播放。");
@@ -453,7 +742,7 @@ void MusicController::ExecuteJob(const Job &job) {
   } else if (job.action == Action::Pause) {
     SetPlaybackStatus(State::Paused, {}, job.request_id);
   } else if (job.action == Action::Stop) {
-    common::MpvCommand({"stop"}, settings_.mpv_socket);
+    StopPcmDecoder();
     SetPlaybackStatus(State::Stopped, {}, job.request_id);
   } else if (job.action == Action::Next || job.action == Action::Previous) {
     if (!WaitForSpeechToFinish(job.revision))
@@ -519,7 +808,8 @@ void MusicController::AppendPlaylist(const json &songs) {
                  SameSongTitle(queued.track.title, track.title);
         });
     if (!duplicate)
-      playlist_.push_back({std::move(track), OriginalSongId(song)});
+      playlist_.push_back(
+          {std::move(track), OriginalSongId(song), SongDurationSeconds(song)});
   }
 }
 
@@ -528,14 +818,21 @@ void MusicController::PlayTrack(const Job &job, const QueueTrack &track,
   if (!WaitForSpeechToFinish(job.revision))
     return;
   const auto previous_path =
-      common::MpvCommand({"get_property", "path"}, settings_.mpv_socket);
+      audio_output_callback_
+          ? json{}
+          : common::MpvCommand({"get_property", "path"}, settings_.mpv_socket);
   const bool switching = job.action == common::MusicAction::Next ||
                          job.action == common::MusicAction::Previous;
   // Each CLI play owns one track. The robot owns song order and metadata.
-  common::MpvCommand({"set_property", "loop-file", "no"}, settings_.mpv_socket);
-  common::MpvCommand({"set_property", "loop-playlist", "no"},
-                     settings_.mpv_socket);
-  common::MpvCommand({"stop"}, settings_.mpv_socket);
+  if (!audio_output_callback_) {
+    common::MpvCommand({"set_property", "loop-file", "no"},
+                       settings_.mpv_socket);
+    common::MpvCommand({"set_property", "loop-playlist", "no"},
+                       settings_.mpv_socket);
+    common::MpvCommand({"stop"}, settings_.mpv_socket);
+  } else {
+    StopPcmDecoder(true);
+  }
   const std::vector<std::string> play_args{
       "play",          "--song",          "--encrypted-id", track.track.song_id,
       "--original-id", track.original_id, "--output",       "json"};
@@ -553,6 +850,15 @@ void MusicController::PlayTrack(const Job &job, const QueueTrack &track,
   auto wait_for_track = [&](double seconds) {
     const double until = Monotonic() + seconds;
     while (IsJobCurrent(job.revision) && Monotonic() < until) {
+      if (audio_output_callback_) {
+        {
+          std::lock_guard<std::mutex> lock(pcm_mutex_);
+          if (pcm_position_ > 0)
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        continue;
+      }
       auto idle = common::MpvCommand({"get_property", "idle-active"},
                                      settings_.mpv_socket);
       if (common::MpvOk(idle) && !idle.value("data", true)) {
@@ -583,6 +889,7 @@ void MusicController::PlayTrack(const Job &job, const QueueTrack &track,
     LOG_WARN("ncm-cli did not load the track on first attempt; retrying once");
     LOG_WARN("First ncm-cli play: exit_code={} timed_out={}", play.exit_code,
              play.timed_out);
+    StopPcmDecoder(true);
     play = RunCliCommand(play_args, job.revision);
     if (!IsJobCurrent(job.revision)) {
       common::MpvCommand({"stop"}, settings_.mpv_socket);
@@ -601,21 +908,22 @@ void MusicController::PlayTrack(const Job &job, const QueueTrack &track,
   }
   if (!IsJobCurrent(job.revision))
     return;
-  common::MpvCommand({"set_property", "audio-device", settings_.audio_device},
-                     settings_.mpv_socket);
-  if (!common::MpvOk(common::MpvCommand({"set_property", "pause", false},
+  if (!audio_output_callback_ &&
+      !common::MpvOk(common::MpvCommand({"set_property", "pause", false},
                                         settings_.mpv_socket))) {
     FailJob(job, "音乐已加载，但无法从扬声器开始播放。");
     return;
   }
-  const auto paused =
-      common::MpvCommand({"get_property", "pause"}, settings_.mpv_socket);
-  if (!common::MpvOk(paused) || paused.value("data", true)) {
-    FailJob(job, "音乐没有从扬声器真正播放出来，请稍后再试。");
-    return;
+  double duration_seconds = track.duration_seconds;
+  if (duration_seconds <= 0) {
+    const auto duration =
+        common::MpvCommand({"get_property", "duration"}, settings_.mpv_socket);
+    if (common::MpvOk(duration) && duration["data"].is_number())
+      duration_seconds = duration["data"].get<double>();
   }
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    status_.duration_seconds = duration_seconds;
     playlist_index_ = index;
     status_.song_id = track.track.song_id;
     status_.title = track.track.title;
@@ -745,9 +1053,31 @@ MusicController::RunCliCommand(const std::vector<std::string> &arguments,
   posix_spawnattr_init(&attributes);
   posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
   posix_spawnattr_setpgroup(&attributes, 0);
+  std::vector<std::string> environment;
+  for (char **entry = environ; *entry; ++entry) {
+    const std::string value(*entry);
+    if (value.rfind("NODE_OPTIONS=", 0) != 0 &&
+        value.rfind("XIAOCAI_MUSIC_PCM_", 0) != 0)
+      environment.push_back(value);
+  }
+  const char *node_options = std::getenv("NODE_OPTIONS");
+  if (!settings_.decoder_adapter_path.empty())
+    environment.push_back(
+        std::string("NODE_OPTIONS=") +
+        (node_options ? std::string(node_options) + " " : "") +
+        "--require=" + settings_.decoder_adapter_path);
+  environment.push_back("XIAOCAI_MUSIC_PCM_FIFO=" + settings_.pcm_fifo);
+  environment.push_back("XIAOCAI_MUSIC_PCM_RATE=" +
+                        std::to_string(settings_.sample_rate));
+  environment.push_back("XIAOCAI_MUSIC_PCM_CHANNELS=" +
+                        std::to_string(settings_.channels));
+  std::vector<char *> envp;
+  for (auto &entry : environment)
+    envp.push_back(entry.data());
+  envp.push_back(nullptr);
   pid_t pid;
-  const int error =
-      posix_spawnp(&pid, argv[0], &actions, &attributes, argv.data(), environ);
+  const int error = posix_spawnp(&pid, argv[0], &actions, &attributes,
+                                 argv.data(), envp.data());
   posix_spawn_file_actions_destroy(&actions);
   posix_spawnattr_destroy(&attributes);
   close(output[1]);
@@ -812,6 +1142,7 @@ bool MusicController::WaitForSpeechToFinish(std::uint64_t revision) {
 void MusicController::FailJob(const Job &job, const std::string &message) {
   if (!IsJobCurrent(job.revision))
     return;
+  StopPcmDecoder();
   SetPlaybackStatus(State::Error, message, job.request_id);
   if (job.request_id == 0)
     speech_callback_(message);

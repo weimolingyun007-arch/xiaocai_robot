@@ -28,14 +28,14 @@ void DialogueNode::InitPublishers() {
       "/xiaocai_robot/tts/request", 10);
   ++initialized_count;
   state_publisher_ = create_publisher<xiaocai_msgs::msg::RobotState>(
-      "/xiaocai_robot/state", rclcpp::QoS(1).transient_local());
+      "/xiaocai_robot/system/state", rclcpp::QoS(1).transient_local());
   ++initialized_count;
   memory_publisher_ = create_publisher<xiaocai_msgs::msg::MemoryCommand>(
       "/xiaocai_robot/memory/command", 10);
   ++initialized_count;
   volume_command_publisher_ =
       create_publisher<xiaocai_msgs::msg::VolumeCommand>(
-          "/xiaocai_robot/audio/volume/command", 10);
+          "/xiaocai_robot/audio/volume_command", 10);
   ++initialized_count;
   music_command_publisher_ = create_publisher<xiaocai_msgs::msg::MusicCommand>(
       "/xiaocai_robot/music/command", 10);
@@ -81,7 +81,7 @@ void DialogueNode::InitSubscribers() {
       });
   ++initialized_count;
   volume_state_subscriber_ = create_subscription<std_msgs::msg::Int32>(
-      "/xiaocai_robot/audio/volume/state", rclcpp::QoS(1).transient_local(),
+      "/xiaocai_robot/audio/volume_state", rclcpp::QoS(1).transient_local(),
       [this](std_msgs::msg::Int32::SharedPtr message) {
         OnVolumeStateCallback(*message);
       });

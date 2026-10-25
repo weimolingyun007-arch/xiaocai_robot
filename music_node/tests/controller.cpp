@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <iostream>
 #include <mutex>
@@ -80,6 +81,8 @@ public:
     worker_.join();
     for (const auto fd : observers_)
       ::close(fd);
+    if (pcm_fd_ >= 0)
+      ::close(pcm_fd_);
     ::close(mpv_fd_);
     ::close(backend_fd_);
     std::filesystem::remove_all(directory_);
@@ -131,14 +134,31 @@ private:
         const auto name = command[0].get<std::string>();
         json data;
         if (name == "fixture-play") {
-          if (!ignore_play)
+          if (!ignore_play) {
             id = command[1].get<std::string>();
+            if (pcm_fd_ >= 0)
+              ::close(pcm_fd_);
+            pcm_fd_ = ::open((socket_ + ".pcm").c_str(),
+                             O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+            const std::vector<std::uint8_t> first_frame(3840, 1);
+            if (pcm_fd_ >= 0)
+              ::write(pcm_fd_, first_frame.data(), first_frame.size());
+          }
           ignore_play = false;
           idle = false;
-        } else if (name == "fixture-end" || name == "stop") {
-          idle = true;
+        } else if (name == "fixture-end" || name == "stop" ||
+                   name == "fixture-close-pcm") {
+          if (pcm_fd_ >= 0) {
+            ::close(pcm_fd_);
+            pcm_fd_ = -1;
+          }
+          if (name != "fixture-close-pcm")
+            idle = true;
         } else if (name == "fixture-ignore-play") {
           ignore_play = true;
+        } else if (name == "expand-text") {
+          data = std::string(idle ? "yes" : "no") + "|" +
+                 (paused ? "yes" : "no") + "|2|120";
         } else if (name == "get_property") {
           const auto property = command[1].get<std::string>();
           if (property == "idle-active")
@@ -172,6 +192,7 @@ private:
 
   std::string directory_, socket_;
   int mpv_fd_, backend_fd_;
+  int pcm_fd_{-1};
   std::atomic<bool> stop_{false};
   std::thread worker_;
   std::vector<int> observers_;
@@ -186,6 +207,7 @@ int main(int argc, char **argv) {
     ::setenv("XIAOCAI_MUSIC_TEST_SOCKET", player.Socket().c_str(), 1);
     MusicSettings settings;
     settings.mpv_socket = player.Socket();
+    settings.pcm_fifo = player.Socket() + ".pcm";
     settings.cli_path = std::filesystem::canonical("/proc/self/exe").string();
     LogManagerConfig config;
     config.directory = std::filesystem::path(player.Socket()).parent_path();
@@ -193,6 +215,7 @@ int main(int argc, char **argv) {
     std::mutex mutex;
     MusicPlaybackStatus status;
     std::vector<MusicPlaybackStatus> events;
+    std::vector<AudioPcmFrame> frames;
     MusicController controller(
         settings, log,
         [&](const MusicPlaybackStatus &value) {
@@ -200,7 +223,11 @@ int main(int argc, char **argv) {
           status = value;
           events.push_back(value);
         },
-        [](const std::string &) {}, [] {});
+        [](const std::string &) {}, [] {},
+        [&](const AudioPcmFrame &frame) {
+          std::lock_guard<std::mutex> lock(mutex);
+          frames.push_back(frame);
+        });
     const auto current = [&] {
       std::lock_guard<std::mutex> lock(mutex);
       return status;
@@ -228,6 +255,63 @@ int main(int argc, char **argv) {
     };
     controller.HandleMusicCommand(Action::Play, "两只老虎", 1);
     wait([&] { return playing("tiger", 1); }, "requested song and metadata");
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      frames.clear();
+    }
+    const auto started = Monotonic();
+    const int writer = open(settings.pcm_fifo.c_str(), O_WRONLY | O_CLOEXEC);
+    if (writer < 0)
+      throw std::runtime_error("cannot open test decoder output");
+    std::vector<std::uint8_t> samples(3840 * 50, 1);
+    std::size_t sent = 0;
+    while (sent < samples.size()) {
+      const auto count =
+          write(writer, samples.data() + sent, samples.size() - sent);
+      if (count < 0 && errno == EINTR)
+        continue;
+      if (count <= 0)
+        throw std::runtime_error("cannot write test decoder samples");
+      sent += static_cast<std::size_t>(count);
+    }
+    close(writer);
+    common::MpvCommand({"fixture-close-pcm"}, player.Socket());
+    const auto eof_deadline = Monotonic() + 6;
+    while (true) {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!frames.empty() &&
+            frames.back().action == common::AudioStreamAction::End)
+          break;
+      }
+      if (Monotonic() > eof_deadline)
+        throw std::runtime_error("PCM decoder EOF timed out");
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    std::cout << "PASS: PCM reader detects decoder EOF" << std::endl;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      std::uint64_t sequence = 0, stream_id = 0;
+      std::size_t count = 0;
+      for (const auto &frame : frames) {
+        if (frame.action != common::AudioStreamAction::Data)
+          continue;
+        if (count == 0)
+          sequence = frame.sequence;
+        if (frame.data.size() != 3840 || frame.sample_rate != 48000 ||
+            frame.channels != 2 || frame.sequence != sequence++ ||
+            (stream_id != 0 && stream_id != frame.stream_id))
+          throw std::runtime_error("invalid PCM reader framing");
+        stream_id = frame.stream_id;
+        ++count;
+      }
+      if (count != 50 || Monotonic() - started < 0.9)
+        throw std::runtime_error(
+            "PCM reader lost samples or decoded ahead of playback");
+      std::cout << "PASS: 50 complete PCM frames, format, ordering and "
+                   "real-time pacing"
+                << std::endl;
+    }
     controller.HandleMusicCommand(Action::Next, {}, 2);
     wait([&] { return playing("star", 2); },
          "next broadens search and skips all versions of current song");
@@ -240,6 +324,16 @@ int main(int argc, char **argv) {
     controller.HandleSpeechAwake(false);
     controller.HandleConversation(common::ConversationPhase::Idle);
     wait([&] { return playing("star", 4); }, "dialogue resumes same song");
+    // The decoder closes its PCM writer at EOF. Simulate that independently
+    // from the fake player's idle flag, just as the real backend does.
+    const int ending_writer =
+        open(settings.pcm_fifo.c_str(), O_WRONLY | O_CLOEXEC);
+    const std::vector<std::uint8_t> ending_samples(3840, 1);
+    if (ending_writer < 0 ||
+        write(ending_writer, ending_samples.data(), ending_samples.size()) !=
+            static_cast<ssize_t>(ending_samples.size()))
+      throw std::runtime_error("cannot simulate PCM decoder EOF");
+    close(ending_writer);
     common::MpvCommand({"fixture-end"}, player.Socket());
     wait([&] { return playing("windmill", 0); }, "EOF advances to other song");
     controller.HandleMusicCommand(Action::Next, {}, 5);

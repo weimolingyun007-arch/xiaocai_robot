@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio_io_node/alsa_pcm.hpp"
 #include "common/node_config_base.hpp"
 
 #include <cstdint>
@@ -9,6 +10,7 @@
 namespace xiaocai_robot {
 
 struct AudioIoSettings {
+  AlsaPcmSettings alsa;
   std::string capture_device{"hw:0,0"};
   std::string playback_device{"xiaocai_speaker"};
   std::string wake_ack_path{

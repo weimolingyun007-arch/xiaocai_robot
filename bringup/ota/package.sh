@@ -23,9 +23,8 @@ trap Cleanup EXIT
 
 payload="$temp_dir/xiaocai_robot"
 mkdir -p "$payload/bin" "$payload/config" "$payload/resource" "$payload/thirdparty" "$payload/msgs" "$payload/bringup/scripts" "$payload/bringup/systemd"
-install -D -m 0644 "$workspace/audio_io_node/assets/asound.conf" "$payload/resource/audio/asound.conf"
 install -D -m 0644 "$workspace/audio_io_node/assets/boot_music.wav" "$payload/resource/audio/boot_music.wav"
-install -D -m 0644 "$workspace/music_node/assets/ncm_player_compat.cjs" "$payload/resource/music/ncm_player_compat.cjs"
+install -D -m 0644 "$workspace/music_node/config/ncm_player_compat.cjs" "$payload/config/music_node/ncm_player_compat.cjs"
 install -D -m 0644 "$workspace/intent_node/assets/intent_model.json" "$payload/resource/intent/intent_model.json"
 for expression in idle listening thinking speaking quiet muted; do
   install -D -m 0644 "$workspace/display_node/assets/$expression.ppm" \
@@ -90,6 +89,22 @@ if [[ "$interface_library_count" -eq 0 ]]; then
   exit 1
 fi
 
+# A node can link against the dispatch library while the dynamically loaded
+# FastRTPS library still belongs to an older interface build.
+fastrtps_library="$payload/msgs/libxiaocai_msgs__rosidl_typesupport_fastrtps_cpp.so"
+if [[ ! -f "$fastrtps_library" ]]; then
+  echo "FastRTPS C++ message support library is missing. Rebuild and install xiaocai_msgs before packaging." >&2
+  exit 1
+fi
+fastrtps_symbols="$(readelf --wide --dyn-syms "$fastrtps_library")"
+while IFS= read -r message; do
+  symbol="rosidl_typesupport_fastrtps_cpp__get_message_type_support_handle__xiaocai_msgs__msg__$message"
+  if ! awk -v symbol="$symbol" '$7 != "UND" && $8 == symbol { found=1 } END { exit !found }' <<< "$fastrtps_symbols"; then
+    echo "FastRTPS support for $message is missing. Rebuild and install xiaocai_msgs before packaging." >&2
+    exit 1
+  fi
+done < <(sed -n 's/^[[:space:]]*"msg\/\([^"]*\)\.msg".*/\1/p' "$workspace/xiaocai_msgs/CMakeLists.txt")
+
 speech_assets="$workspace/speech_input_node/assets"
 speech_payload="$payload/resource/speech"
 vosk_model=vosk-model-small-cn-0.22
@@ -142,8 +157,7 @@ BEGIN {
   sub(/\/$/, "", path)
   if (path == "xiaocai_robot" || path == "xiaocai_robot/bin" || path == "xiaocai_robot/config" || path == "xiaocai_robot/resource" || path == "xiaocai_robot/resource/speech" || path == "xiaocai_robot/resource/tts" || path == "xiaocai_robot/resource/audio" || path == "xiaocai_robot/resource/intent" || path == "xiaocai_robot/resource/display" || path == "xiaocai_robot/thirdparty" || path == "xiaocai_robot/msgs" || path == "xiaocai_robot/bringup" || path == "xiaocai_robot/bringup/scripts" || path == "xiaocai_robot/bringup/systemd") next
   count=split(path, part, "/")
-  if (path == "xiaocai_robot/resource/music") next
-  if (path == "xiaocai_robot/resource/music/ncm_player_compat.cjs") { music_compat++; next }
+  if (path == "xiaocai_robot/config/music_node/ncm_player_compat.cjs") { music_compat++; next }
   if (count == 3 && part[1] == "xiaocai_robot" && part[2] == "config" && (part[3] in node)) next
   if (count == 4 && part[1] == "xiaocai_robot" && part[2] == "config" && (part[3] in node) && part[4] == "biz_config.toml") { configs[part[3]]++; next }
   if (count == 3 && part[1] == "xiaocai_robot" && part[2] == "bin" && (part[3] in node)) {
@@ -157,7 +171,6 @@ BEGIN {
   if (path == "xiaocai_robot/bringup/systemd/xiaocai.service") { service_unit++; next }
   if (count >= 4 && part[1] == "xiaocai_robot" && part[2] == "resource" && (part[3] == "speech" || part[3] == "tts")) { assets++; next }
   if (count == 4 && part[1] == "xiaocai_robot" && part[2] == "resource" && part[3] == "display" && part[4] ~ /^(idle|listening|thinking|speaking|quiet|muted)\.ppm$/) { display_assets++; next }
-  if (path == "xiaocai_robot/resource/audio/asound.conf") { alsa_config++; next }
   if (path == "xiaocai_robot/resource/audio/boot_music.wav") { boot_music++; next }
   if (path == "xiaocai_robot/resource/intent/intent_model.json") { intent_model++; next }
   print "Unexpected package entry: " path > "/dev/stderr"
@@ -166,7 +179,7 @@ BEGIN {
 END {
   for (name in node) if (executable[name] != 1) { print "Missing executable: " name > "/dev/stderr"; invalid=1 }
   for (name in node) if (configs[name] != 1) { print "Missing node config: " name > "/dev/stderr"; invalid=1 }
-  if (libraries == 0 || interface_libraries == 0 || assets == 0 || display_assets != 6 || alsa_config != 1 || boot_music != 1 || intent_model != 1 || music_compat != 1 || start_script != 1 || stop_script != 1 || service_unit != 1) { print "Missing runtime dependency, custom message library, asset, ALSA configuration, startup music, intent model, music compatibility adapter, bringup script, or systemd unit" > "/dev/stderr"; invalid=1 }
+  if (libraries == 0 || interface_libraries == 0 || assets == 0 || display_assets != 6 || boot_music != 1 || intent_model != 1 || music_compat != 1 || start_script != 1 || stop_script != 1 || service_unit != 1) { print "Missing runtime dependency, custom message library, asset, startup music, intent model, music compatibility adapter, bringup script, or systemd unit" > "/dev/stderr"; invalid=1 }
   if (invalid) exit 1
 }'; then
   echo "Package must contain only node executables, runtime libraries, model assets, bringup scripts, and the systemd unit." >&2

@@ -86,6 +86,7 @@
 - ROS 通信初始化方法按约定使用 `InitPublishers()`、`InitSubscribers()`、`InitClients()`、`InitServers()`。
 - 订阅者回调统一由节点成员方法处理，方法名采用 `On<消息或主题>Callback` 格式，例如 `OnTextCallback()`、`OnIntentCallback()`、`OnAudioPlayingCallback()`。`InitSubscribers()` 中的订阅 lambda 只转交消息，不承载业务处理逻辑。
 - ROS 通信对象成员变量以用途或主题命名，并使用完整对象类型后缀：发布者为 `_publisher_`、订阅者为 `_subscriber_`、客户端为 `_client_`、服务端为 `_server_`。例如 `state_publisher_`、`intent_subscriber_`、`volume_get_client_`、`volume_get_server_`；避免使用 `state_`、`intent_sub_` 等无法直接判断对象类型的名称。
+- 封装 ROS 消息发布的成员函数统一使用 `Publish` 前缀，例如 `PublishPlaybackResult()`、`PublishMusicState()`、`PublishMusicPlaybackState()`；定时采样并发布状态的函数也遵循此命名规则。所有发布函数在头文件与 `.cpp` 中均集中、连续放在消息发布分组，位于通信初始化函数之后、订阅回调之前，不分散到工作线程或设备控制分组中。
 - 封装客户端请求的成员函数统一使用 `Client` 前缀，例如 `ClientVolume()`；客户端请求函数单独分组，不与 `Publish...()` 发布函数放在同一组。
 - 类头文件中的私有成员函数按职责分组；每组第一条声明上方添加单行注释说明该组职责，不同组之间空一行。ROS 通信方法可按初始化、消息发布、订阅回调等职责分组。
 - `.cpp` 中成员函数定义的分组顺序及组内顺序必须与头文件中的声明一致。
@@ -143,9 +144,41 @@ retention_days = 7
 - 默认值、错误路径和缺参行为应显式定义，不能依赖未初始化字段或隐式转换。
 - 错误日志应包含足以定位问题的上下文；避免在高频回调中无控制地重复打印同一错误。
 
+## ROS 话题命名
+
+项目自定义业务话题的完整名称统一为三段，格式如下：
+
+```text
+/xiaocai_robot/<业务域>/<功能>
+```
+
+开头的 `/` 不计入段数，三段之间用 `/` 分隔，各段含义如下：
+
+| 段位 | 命名规则 | 示例 |
+| --- | --- | --- |
+| 第一段 | 固定为 `xiaocai_robot`，表示项目统一命名空间。 | `xiaocai_robot` |
+| 第二段 | 表示业务域，使用小写 `snake_case`，例如音频、音乐、对话、网络或系统。 | `audio`、`music`、`dialogue`、`wifi`、`ble`、`system` |
+| 第三段 | 表示该业务域内的具体功能，使用小写 `snake_case`；需要细分时使用下划线组合。 | `play`、`command`、`music_command`、`volume_state` |
+
+- 话题必须恰好包含三个非空段；不能通过增加 `/` 拆分子功能，也不能省略第一段或第二段。
+- 第二段按业务职责命名，不直接使用带 `_node` 后缀的 ROS 节点名。
+- 同一功能的发布者与订阅者必须使用相同的完整话题名；新增或迁移话题时，同步更新上下游节点、配置、启动脚本、话题重映射和接口文档。
+- ROS 系统自动生成的话题（如 `/rosout`、`/parameter_events`）及第三方接口规定的话题沿用其原有命名。
+
+命名示例：
+
+| 功能 | 规范话题名 | 不符合三段规则的写法 |
+| --- | --- | --- |
+| 音乐业务命令 | `/xiaocai_robot/music/command` | `/music/command` |
+| 音频节点接收 PCM 帧 | `/xiaocai_robot/audio/stream` | `/xiaocai_robot/audio/stream/command` |
+| 当前音量状态 | `/xiaocai_robot/audio/volume_state` | `/xiaocai_robot/audio/volume/state` |
+| 静默音量调整命令 | `/xiaocai_robot/audio/volume_silent_command` | `/xiaocai_robot/audio/volume/silent_command` |
+| 节点就绪状态 | `/xiaocai_robot/system/readiness` | `/xiaocai_robot/system/node/readiness` |
+| 机器人运行状态 | `/xiaocai_robot/system/state` | `/xiaocai_robot/state` |
+
 ## ROS 接口与构建
 
-- 项目机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。
+- 项目机器人服务统一使用 `/xiaocai_robot/` 前缀；话题遵循上文的三段式命名规则。
 - `xiaocai_msgs` 中每个 `.msg` 的第一个字段必须是 `builtin_interfaces/Time timestamp`，周期状态快照 `BleStatus` 除外。消息发布者在发布时用本节点 ROS 时钟填写 `timestamp`（`now().to_msg()`），不得留默认零值。
 - 每个 `.srv` 请求部分（`---` 之前）的第一个字段必须是 `builtin_interfaces/Time timestamp`。客户端发送请求时用本节点 ROS 时钟填写；响应字段按业务需要定义，不受该请求字段顺序要求影响。
 - 意图、状态和操作等跨节点枚举统一定义在 `common/include/defination/` 的 C++ `enum class` 中。`.msg` 仅用基础整数类型承载枚举值；新增或调整枚举时同步检查所有生产者、消费者和接口文档。

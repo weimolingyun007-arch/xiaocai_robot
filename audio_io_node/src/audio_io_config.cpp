@@ -1,13 +1,46 @@
 #include "audio_io_node/audio_io_config.hpp"
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 
 namespace xiaocai_robot {
+
+namespace {
+AlsaPcmSettings ReadAlsaPcmSettings(const toml::table *table) {
+  AlsaPcmSettings settings;
+  if (!table)
+    return settings;
+  if (auto value = (*table)["pcm_name"].value<std::string>())
+    settings.pcm_name = *value;
+  if (auto value = (*table)["slave_pcm"].value<std::string>())
+    settings.slave_pcm = *value;
+  if (auto value = (*table)["softvol_control_name"].value<std::string>())
+    settings.softvol_control_name = *value;
+  if (auto value = (*table)["card"].value<std::int64_t>()) {
+    if (*value < 0 || *value > std::numeric_limits<int>::max())
+      throw std::runtime_error("ALSA card is outside the supported range");
+    settings.card = static_cast<int>(*value);
+  }
+  if (auto value = (*table)["min_db"].value<double>())
+    settings.min_db = *value;
+  if (auto value = (*table)["max_db"].value<double>())
+    settings.max_db = *value;
+  if (auto value = (*table)["resolution"].value<std::int64_t>()) {
+    if (*value < 1 || *value > std::numeric_limits<int>::max())
+      throw std::runtime_error(
+          "ALSA softvol resolution is outside the supported range");
+    settings.resolution = static_cast<int>(*value);
+  }
+  return settings;
+}
+
+} // namespace
 
 AudioIoConfig::AudioIoConfig() : NodeConfigBase("audio_io_node") {
   const auto *section = Document()["audio_io"].as_table();
   if (!section)
     return;
+  settings_.alsa = ReadAlsaPcmSettings((*section)["alsa"].as_table());
   if (auto value = (*section)["capture_device"].value<std::string>())
     settings_.capture_device = *value;
   if (auto value = (*section)["playback_device"].value<std::string>())

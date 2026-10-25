@@ -14,7 +14,7 @@
 | `dialogue_node` | 本地功能协调、DeepSeek 对话及本地工具调用 |
 | `memory_node` | SQLite 记忆、免打扰状态和提醒 |
 | `tts_node` | sherpa-onnx 离线中文语音合成 |
-| `music_node` | 调用网易云 ncm-cli 搜歌、播放及控制 |
+| `music_node` | 网易云登录、搜歌、解码、队列、暂停/继续与进度管理 |
 | `wifi_manager` | 扫描和连接 Wi-Fi、自动重连并发布连接状态及上下行速率 |
 | `ble_manager` | 管理蓝牙低功耗扫描、连接、GATT 写入与通知接收，并发布蓝牙状态 |
 | `display_node` | 横屏开机就绪页、表情、音乐信息和同步歌词显示 |
@@ -63,8 +63,8 @@ bash bringup/scripts/start_all_node.sh
 | 工具名 | 本地执行方式 |
 | --- | --- |
 | `get_current_time` | C++ 读取板端系统时钟，返回北京时间、日期、星期；准确性依赖板端时钟 |
-| `get_volume` | 读取对话节点缓存的 `/xiaocai_robot/audio/volume/state` 最新值 |
-| `set_volume` | 发布 `/xiaocai_robot/audio/volume/command`，等待实际音量反馈；范围 0–150，超过100时语音和音乐一起增强，最多 +6 dB |
+| `get_volume` | 读取对话节点缓存的 `/xiaocai_robot/audio/volume_state` 最新值 |
+| `set_volume` | 发布 `/xiaocai_robot/audio/volume_command`，等待实际音量反馈；范围 0–150，超过100时语音和音乐一起增强，最多 +6 dB |
 | `control_music` | 发布 `MusicCommand`，等待 `music_node` 返回相同请求编号的状态；支持播放、暂停、继续、停止、上/下一首 |
 | `get_music_status` | 读取 `music_node` 最新播放状态、歌曲名和进度 |
 | `save_memory` / `forget_memory` / `list_memories` | 请求 `memory_node`，等待 SQLite 操作结果 |
@@ -125,8 +125,10 @@ sudo bash bringup/ota/install_autostart.sh
 
 - `/xiaocai_robot/audio/mic`：咪头音频数据
 - `/xiaocai_robot/audio/playing`：喇叭播放状态
-- `/xiaocai_robot/audio/volume/state`：音量变化事件
-- `/xiaocai_robot/audio/volume/command`：音量设置和增减命令，类型为 `xiaocai_msgs/msg/VolumeCommand`
+- `/xiaocai_robot/audio/volume_state`：`std_msgs/msg/Int32`，音频节点发布音量变化状态
+- `/xiaocai_robot/audio/volume_command`：音量设置和增减命令，类型为 `xiaocai_msgs/msg/VolumeCommand`
+- `/xiaocai_robot/audio/volume_silent_command`：显示界面的静默音量调整命令；设置成功后不广播音量事件
+- `/xiaocai_robot/audio/stream`：`AudioStream`，音乐节点通过 ROS 发送解码后的 PCM 帧，消息包含流编号、序号、采样率、声道数、数据及结束/取消标志
 - `/xiaocai_robot/speech/text`：唤醒后的语音识别文字
 - `/xiaocai_robot/speech/awake`：唤醒状态
 - `/xiaocai_robot/dialogue/command`：交给对话节点处理的意图，类型为 `xiaocai_msgs/msg/DialogueCommand`，只在闲聊、免打扰开关和提醒澄清等对话路径发布
@@ -138,7 +140,7 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/audio/result`：`AudioPlaybackResult`，WAV 路径及播放结果；取消、文件缺失或静默丢弃也回报失败
 - `/xiaocai_robot/audio/play`：待播放 WAV 路径，类型为 `xiaocai_msgs/msg/AudioPlay`；`path` 为空时停止播放并清空待播队列
 - `/xiaocai_robot/audio/startup_music`：`std_msgs/msg/Empty`；显示节点在核心节点全部就绪后发一次，音频节点播放柔和开机旋律，不解除语音待机静音
-- `/xiaocai_robot/state`：机器人状态，类型为 `xiaocai_msgs/msg/RobotState`，字段 `state`
+- `/xiaocai_robot/system/state`：机器人状态，类型为 `xiaocai_msgs/msg/RobotState`，字段 `state`
 - `/xiaocai_robot/system/readiness`：核心节点初始化状态，类型为 `xiaocai_msgs/msg/NodeReadiness`；每个核心节点就绪后每秒发布一次，显示节点用它决定何时结束开机页
 - `/xiaocai_robot/memory/command`：记忆操作请求，类型为 `xiaocai_msgs/msg/MemoryCommand`，字段 `operation`、`request_id`、`content`、`delay_seconds`、`enabled`
 - `/xiaocai_robot/memory/result`：记忆操作结果，类型为 `xiaocai_msgs/msg/MemoryResult`，字段 `operation`、`request_id`、`ok`、`error`、`facts`、`content`、`deleted`、`enabled`
@@ -146,12 +148,11 @@ sudo bash bringup/ota/install_autostart.sh
 - `/xiaocai_robot/music/state`：音乐状态，类型为 `xiaocai_msgs/msg/MusicState`，字段 `state`、`song_id`、`title`、`artist`、`position_seconds`、`duration_seconds`、`error`、`request_id`
 - `/xiaocai_robot/music/login`：`MusicLogin`，需要授权时携带官方登录链接、加载标记和错误状态，屏幕优先显示二维码；不传递账号 token
 - `/xiaocai_robot/music/lyrics`：`MusicLyrics`，歌曲编号、标题、歌手、加载标记、每句开始秒数和文字；保留最近一首的完整时间线
-- `/xiaocai_robot/audio/volume/state`：`std_msgs/msg/Int32`，音频节点发布音量变化状态
 - `/xiaocai_robot/audio/get_volume`：`xiaocai_msgs/srv/GetVolume`，音量查询时由 `intent_node` 直接请求 `audio_io_node` 的当前音量
 
 `Intent.type` 使用 `uint8` 承载 `xiaocai_robot::common::IntentType` 的枚举值；该枚举包含闲聊、音量查询、免打扰开关和提醒澄清等可路由意图。聊天、免打扰开关和提醒澄清由 `DialogueCommand` 交给对话节点；音量查询由 `intent_node` 直接调用 `audio_io_node` 的 `GetVolume` 服务，并通过 TTS 文本话题播报结果，不经过对话节点。音乐、音量调节、记忆和提醒创建分别通过 `MusicCommand`、`VolumeCommand`、`MemoryCommand` 传递，并使用 `MusicAction`、`VolumeAction`、`MemoryOperation` 表示操作类型；这些枚举定义在 `common/include/defination/`。`MusicCommand.request_id` 与 `MusicState.request_id` 使用 `uint64`；`0` 表示普通语音命令，音乐工具请求使用非零编号并由 `MusicState` 原样回传。除周期发布的 `BleStatus` 状态快照外，自定义消息和服务请求部分的首字段均为 `builtin_interfaces/Time timestamp`，发送时填写本节点 ROS 时钟。
 
-所有机器人话题和服务统一使用 `/xiaocai_robot/` 前缀。对话意图、音乐操作、音量操作和记忆操作使用各自的自定义命令消息，避免把无关业务参数混装在一个通用消息中。状态与操作枚举统一在 `common/include/defination/` 的 C++ 枚举中定义，由消息的整数型字段承载；`.msg` 不声明重复的枚举常量。除 `BleStatus` 外，每个自定义消息以及服务请求部分的首字段都是 `builtin_interfaces/Time timestamp`。自定义接口定义位于 `xiaocai_msgs/msg/` 与 `xiaocai_msgs/srv/`，由 `make build` 先生成，再编译依赖节点。
+项目业务话题统一采用 `/xiaocai_robot/<业务域>/<功能>` 三段式名称，子功能通过下划线组合，例如 `/xiaocai_robot/audio/volume_command`；服务统一使用 `/xiaocai_robot/` 前缀。详细要求见 [ROS 节点代码规范](docs/ros_node_code_style.md#ros-话题命名)。对话意图、音乐操作、音量操作和记忆操作使用各自的自定义命令消息，避免把无关业务参数混装在一个通用消息中。状态与操作枚举统一在 `common/include/defination/` 的 C++ 枚举中定义，由消息的整数型字段承载；`.msg` 不声明重复的枚举常量。除 `BleStatus` 外，每个自定义消息以及服务请求部分的首字段都是 `builtin_interfaces/Time timestamp`。自定义接口定义位于 `xiaocai_msgs/msg/` 与 `xiaocai_msgs/srv/`，由 `make build` 先生成，再编译依赖节点。
 
 ## 网易云语音点歌
 
@@ -167,13 +168,13 @@ sudo bash bringup/ota/install_autostart.sh
 
 `MusicState.state` 的数值在 `common/include/defination/music_state.hpp` 定义：0 停止、1 搜索中、2 播放、3 暂停、4 错误。音乐状态话题支持保留最后一条消息，语音节点重启后也能获取播放状态。歌曲能否播放取决于开放平台和账号权限，节点只选择平台标记当前账号可播放的搜索结果。
 
-`display_node` 先启动并显示与待机表情同款的极简动画开机页。音频、语音识别、意图、对话、记忆、TTS 和音乐节点完成本地资源初始化后，在 `/xiaocai_robot/system/readiness` 定期发布就绪状态；显示节点只在启动阶段等待所有核心节点首次就绪，切入运行页面后会保持运行态，不因思考期间的心跳延迟或节点忙碌而重新显示开机页。首次全部就绪后，音频节点播放一次柔和开机旋律，显示页切入机器人当前表情或歌词页。开机旋律不会解除语音待机静音，也不会把机器人状态切成“说话”。点击歌词页的下一首或上一首时，切歌搜索期间保持歌词页；用户唤醒后仍优先显示聆听和对话表情。Wi-Fi 和蓝牙连接不阻塞开机。`dialogue_node` 根据唤醒、对话阶段和实际语音播放决定机器人状态并发布 `/xiaocai_robot/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点可读取最近状态。
+`display_node` 先启动并显示与待机表情同款的极简动画开机页。音频、语音识别、意图、对话、记忆、TTS 和音乐节点完成本地资源初始化后，在 `/xiaocai_robot/system/readiness` 定期发布就绪状态；显示节点只在启动阶段等待所有核心节点首次就绪，切入运行页面后会保持运行态，不因思考期间的心跳延迟或节点忙碌而重新显示开机页。首次全部就绪后，音频节点播放一次柔和开机旋律，显示页切入机器人当前表情或歌词页。开机旋律不会解除语音待机静音，也不会把机器人状态切成“说话”。点击歌词页的下一首或上一首时，切歌搜索期间保持歌词页；用户唤醒后仍优先显示聆听和对话表情。Wi-Fi 和蓝牙连接不阻塞开机。`dialogue_node` 根据唤醒、对话阶段和实际语音播放决定机器人状态并发布 `/xiaocai_robot/system/state`；`display_node` 在 `ShowRobotState()` 中将 `RobotState` 映射为待机、聆听、思考、说话、免打扰和静音六种表情。表情素材位于 `resource/display/`；启动脚本把 DSI 输出旋转为 800×480 横屏。状态话题使用 transient-local QoS，显示节点可读取最近状态。
 
 ### 同步歌词与会话完成
 
 播放或暂停音乐时，`display_node` 显示纯歌词页：标题、歌手、上一句、青色当前句、下一句以及进度和时长；切换曲目期间保留当前音乐页，等新曲目载入后刷新。音乐播放状态不受机器人表情状态打断，停止或播放错误时再回到表情页。页面底部三个按钮按整个屏幕宽度等距对称排列。用户在右侧触摸并滑动时，临时显示悬浮的 0–150% 音量控件，不占用音乐页面布局；松开后短暂显示音量再自动隐藏。滑条直接向音频节点发静音确认命令，不播报“音量调到百分之……”；语音指令和对话工具继续使用原有确认流程。启动脚本会在屏幕旋转后把触摸设备映射到 DSI 输出，令触摸和鼠标使用同一屏幕坐标。
 
-`MusicController` 保存播放队列、歌曲编号及当前索引；手动切歌和自然播完使用同一条加载路径，确认音源已改变且音频输出就绪后才发布新歌曲及歌词。网易云 CLI 通常只在 MPV 中加载当前一首，因此不使用 MPV `playlist-pos` 推断网易云队列位置。独立的 `MusicLyricsLoader` 通过 `ncm-cli song lyric --songId ... --output json` 获取 LRC，支持毫秒时间戳、多时间标签和 offset。歌词请求有超时和缓存，切歌后丢弃旧请求结果，网络等待不阻塞播放。`LyricsPresenter` 按实际播放秒数选择当前行，暂停时冻结；无时间歌词显示“暂无歌词”，开头及空白段显示“音乐前奏/音乐间奏”。
+`MusicController` 保存播放队列、歌曲编号及当前索引；手动切歌和自然播完使用同一条加载路径，确认音源已改变且音频输出就绪后才发布新歌曲及歌词。网易云解码器每次只加载一首，队列位置由音乐节点维护。独立的 `MusicLyricsLoader` 通过 `ncm-cli song lyric --songId ... --output json` 获取 LRC，支持毫秒时间戳、多时间标签和 offset。歌词请求有超时和缓存，切歌后丢弃旧请求结果，网络等待不阻塞播放。`LyricsPresenter` 按实际播放秒数选择当前行，暂停时冻结；无时间歌词显示“暂无歌词”，开头及空白段显示“音乐前奏/音乐间奏”。
 
 模型最终回答使用 `{"reply":"要说的话","expect_reply":true或false}`。需要用户确认或补充时设置 `expect_reply=true`；程序只朗读 `reply`。本地缺参追问也使用相同续听策略。`DialogueController` 用 TTS 请求编号跟踪回复，只有 `audio_io_node` 报告对应 WAV 播放结束后，才继续监听或结束对话；唤醒应答、旧回复和被取消的请求不会提前结束当前对话。续听不依赖是否正在播放音乐。
 
@@ -187,7 +188,9 @@ sudo bash bringup/ota/install_autostart.sh
 
 收到音乐播放指令后，在搜索和准备播放期间显示思考表情；播放就绪后切到歌词页。搜索失败日志记录 CLI 退出码、超时和接口状态，便于区分登录失效与请求失败。
 
-`ncm-cli 0.1.7` 的播放后台请求固定在 3 秒后超时，板端的公网 IP 查询、歌曲地址请求和 MPV 冷启动可能超过这个时长。启动脚本通过 `NODE_OPTIONS` 预加载 `resource/music/ncm_player_compat.cjs`，只对该包的 0.1.7 版本把 3 秒计时调整为 20 秒；未修改已安装的 CLI。升级 CLI 后应重新评估并移除此适配。音乐节点保持后台订阅，每次最多等待 25 秒，确认 MPV 的音频输出完成初始化后才报告播放成功，失败最多重试一次。首曲就绪后立即播放，后续曲目保存在节点内存中，切歌时再获取目标音源；不再依靠可能被唤醒中断的 CLI 队列追加，也不使用单曲循环兜底。后台和 MPV 必须继承启动脚本的 `ALSA_CONFIG_PATH`，否则独立启动的后台可能找不到 `xiaocai_speaker`。
+`music_node` 管理网易云登录、搜索、队列、选曲、暂停/继续、进度和歌词，也维护 ncm-cli 后台订阅。它启动的 MPV 只解码并向本地 FIFO 写入 48 kHz、双声道、S16_LE PCM，使用 `ao=pcm`。音乐节点使用独立读取与发送线程，通过有界缓存接收 MPV 的批量输出，按 20 ms 分帧发送，通过 `/xiaocai_robot/audio/stream` 将 PCM 字节交给 `audio_io_node` 后，只有后者的 aplay 打开声卡并输出音乐。音乐状态和进度统一由 `/xiaocai_robot/music/state` 发布；进度按已发送的 PCM 采样数累计，暂停保留未发送的采样。
+
+音乐控制器仅对自己的 CLI 子进程加载 `config/music_node/ncm_player_compat.cjs`：适配已安装的官方 CLI 0.1.7 的请求超时，并强制 MPV 输出 PCM 管道。其他 CLI 版本会拒绝使用该解码适配，需要升级适配后再启用；未修改安装的 CLI 或账号文件。`audio_io_node` 从自己的 `biz_config.toml` 解析 ALSA 参数，再由节点内的 `alsa_pcm.hpp` 转为 ALSA 原生格式；文件语音和 ROS PCM 流的 aplay 共用同一 PCM/softvol 输出。
 
 `MusicLoginManager` 独立检查网易云登录状态。正常时每 60 秒检查；需要授权时调用官方 `ncm-cli login --background`，将登录链接发布到保留的 `/music/login` 话题，并语音提示扫码。`display_node` 使用 `thirdparty/qrcodegen-1.8.0` 中的 [MIT 二维码生成库](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/cpp) 在本地画码，保留白色留边；登录页优先于表情与歌词。等待授权时每 3 秒检查，二维码每 120 秒更新；临时网络失败显示重试提示，15 秒后重试，不把网络异常直接当成退出登录。确认登录后自动关闭二维码页。
 

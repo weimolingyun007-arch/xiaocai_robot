@@ -31,6 +31,9 @@ void MusicNode::InitPublishers() {
   state_publisher_ = create_publisher<xiaocai_msgs::msg::MusicState>(
       "/xiaocai_robot/music/state", rclcpp::QoS(1).transient_local());
   ++initialized_count;
+  stream_publisher_ = create_publisher<xiaocai_msgs::msg::AudioStream>(
+      "/xiaocai_robot/audio/stream", rclcpp::QoS(10));
+  ++initialized_count;
   tts_publisher_ =
       create_publisher<std_msgs::msg::String>("/xiaocai_robot/tts/text", 10);
   ++initialized_count;
@@ -77,6 +80,21 @@ void MusicNode::InitSubscribers() {
             OnConversationStateCallback(*message);
           });
   ++initialized_count;
+  audio_result_subscriber_ =
+      create_subscription<xiaocai_msgs::msg::AudioPlaybackResult>(
+          "/xiaocai_robot/audio/result", 100,
+          [this](xiaocai_msgs::msg::AudioPlaybackResult::SharedPtr message) {
+            if (music_controller_ && !message->success &&
+                message->path.rfind("pcm:", 0) == 0) {
+              try {
+                music_controller_->HandleAudioOutputFailure(
+                    std::stoull(message->path.substr(4)));
+              } catch (const std::exception &) {
+                LOG_WARN("Invalid PCM output result identifier");
+              }
+            }
+          });
+  ++initialized_count;
   LOG_INFO("Initialized {} subscribers", initialized_count);
 }
 
@@ -99,7 +117,8 @@ void MusicNode::InitController() {
       [this] {
         if (login_manager_)
           login_manager_->RequestLogin();
-      });
+      },
+      [this](const AudioPcmFrame &frame) { PublishAudioStream(frame); });
   PublishLoginStatus({});
   login_manager_ = std::make_unique<MusicLoginManager>(
       music_config_.Settings().cli_path, log_manager_,
@@ -107,6 +126,18 @@ void MusicNode::InitController() {
       [this](const std::string &text) { PublishSpeech(text); });
   LOG_INFO("NetEase voice music ready; CLI: {}",
            music_config_.Settings().cli_path);
+}
+
+void MusicNode::PublishAudioStream(const AudioPcmFrame &frame) {
+  xiaocai_msgs::msg::AudioStream message;
+  message.timestamp = now();
+  message.action = static_cast<std::uint8_t>(frame.action);
+  message.stream_id = frame.stream_id;
+  message.sequence = frame.sequence;
+  message.sample_rate = frame.sample_rate;
+  message.channels = frame.channels;
+  message.data = frame.data;
+  stream_publisher_->publish(message);
 }
 
 void MusicNode::PublishState(const MusicPlaybackStatus &status) {

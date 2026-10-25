@@ -55,7 +55,7 @@ flowchart LR
 | --- | --- | --- |
 | `/xiaocai_robot/dialogue/command` | `xiaocai_msgs/msg/DialogueCommand` | 普通聊天、安静模式切换、提醒澄清等需要对话节点处理的意图。音量查询不发到此话题。 |
 | `/xiaocai_robot/music/command` | `xiaocai_msgs/msg/MusicCommand` | 播放、暂停、继续、停止、下一首、上一首，并携带查询文本。 |
-| `/xiaocai_robot/audio/volume/command` | `xiaocai_msgs/msg/VolumeCommand` | 设置、增加或减少音量。 |
+| `/xiaocai_robot/audio/volume_command` | `xiaocai_msgs/msg/VolumeCommand` | 设置、增加或减少音量。 |
 | `/xiaocai_robot/tts/text` | `std_msgs/msg/String` | 由 `intent_node` 播报音量查询结果；语音合成仍由 `tts_node` 执行。 |
 | `/xiaocai_robot/memory/command` | `xiaocai_msgs/msg/MemoryCommand` | 事实保存、删除、列举和提醒创建等操作。 |
 | `/xiaocai_robot/system/readiness` | `xiaocai_msgs/msg/NodeReadiness` | 由公共 `NodeReadinessPublisher` 周期发布节点就绪状态；节点完成初始化后标记为 ready。 |
