@@ -21,6 +21,11 @@ namespace xiaocai_robot {
 
 namespace {
 using State = common::MusicState;
+// PCM frames are 20 ms each. Keep enough decoded audio to absorb network
+// stalls without making a normal track wait for the full rebuffer threshold.
+constexpr std::size_t kPcmQueueFrames = 500;    // 10 seconds
+constexpr std::size_t kPcmStartFrames = 50;     // 1 second
+constexpr std::size_t kPcmRebufferFrames = 250; // 5 seconds
 
 MusicTrack TrackFromSong(const json &song) {
   MusicTrack track{
@@ -516,7 +521,8 @@ void MusicController::PcmReaderLoop() {
     pcm_ready_.wait(lock, [this] {
       // Bound decoder read-ahead; pausing the sender naturally backpressures
       // MPV without depending on its control IPC during a blocking write.
-      return stop_ || (pcm_active_ && !pcm_eof_ && pcm_queue_.size() < 96);
+      return stop_ ||
+             (pcm_active_ && !pcm_eof_ && pcm_queue_.size() < kPcmQueueFrames);
     });
     if (stop_)
       return;
@@ -554,17 +560,33 @@ void MusicController::PcmReaderLoop() {
 void MusicController::PcmPublishLoop() {
   auto next_frame = std::chrono::steady_clock::now();
   std::uint64_t generation = 0;
+  bool buffering = true;
+  bool started = false;
   while (!stop_) {
     std::unique_lock<std::mutex> lock(pcm_mutex_);
-    pcm_ready_.wait(lock, [this] {
-      return stop_ ||
-             (pcm_active_ && !pcm_paused_ && (!pcm_queue_.empty() || pcm_eof_));
-    });
+    pcm_ready_.wait(lock,
+                    [this] { return stop_ || (pcm_active_ && !pcm_paused_); });
     if (stop_)
       return;
     if (generation != pcm_generation_) {
       generation = pcm_generation_;
       next_frame = std::chrono::steady_clock::now();
+      buffering = true;
+      started = false;
+    }
+    if (buffering) {
+      const auto threshold = started ? kPcmRebufferFrames : kPcmStartFrames;
+      pcm_ready_.wait(lock, [this, generation, threshold] {
+        return stop_ || !pcm_active_ || pcm_paused_ ||
+               pcm_generation_ != generation || pcm_eof_ ||
+               pcm_queue_.size() >= threshold;
+      });
+      if (stop_ || !pcm_active_ || pcm_paused_ || pcm_generation_ != generation)
+        continue;
+      buffering = false;
+      next_frame = std::chrono::steady_clock::now();
+      if (started)
+        LOG_INFO("Music PCM buffer refilled; playback resumed");
     }
     pcm_ready_.wait_until(lock, next_frame, [this, generation] {
       return stop_ || !pcm_active_ || pcm_paused_ ||
@@ -572,6 +594,18 @@ void MusicController::PcmPublishLoop() {
     });
     if (stop_ || !pcm_active_ || pcm_paused_ || pcm_generation_ != generation)
       continue;
+    if (pcm_queue_.empty() && !pcm_eof_) {
+      // Stop the sink while refilling so it does not repeatedly underrun.
+      AudioPcmFrame cancel;
+      cancel.action = common::AudioStreamAction::Cancel;
+      cancel.stream_id = pcm_stream_id_++;
+      cancel.sequence = pcm_sequence_;
+      pcm_sequence_ = 0;
+      audio_output_callback_(cancel);
+      buffering = true;
+      LOG_WARN("Music PCM buffer empty; waiting for audio to refill");
+      continue;
+    }
     AudioPcmFrame frame;
     frame.stream_id = pcm_stream_id_;
     frame.sequence = pcm_sequence_++;
@@ -581,6 +615,7 @@ void MusicController::PcmPublishLoop() {
       frame.action = common::AudioStreamAction::End;
       pcm_active_ = false;
     } else {
+      started = true;
       frame.data = std::move(pcm_queue_.front());
       pcm_queue_.pop_front();
       pcm_position_ += static_cast<double>(frame.data.size()) /
