@@ -11,7 +11,7 @@
 | `audio_io_node` | 咪头采样、喇叭播放与音量控制 |
 | `speech_input_node` | SenseVoice 中文语音识别、Vosk 唤醒词检测 |
 | `intent_node` | 判断音乐、音量、免打扰、记忆、提醒和闲聊意图 |
-| `dialogue_node` | 本地功能协调、DeepSeek 对话及本地工具调用 |
+| `dialogue_node` | 本地功能协调、优先请求电脑端 Gemma，对话失败时回退到 DeepSeek，并执行本地工具 |
 | `memory_node` | SQLite 记忆、免打扰状态和提醒 |
 | `tts_node` | sherpa-onnx 离线中文语音合成 |
 | `music_node` | 网易云登录、搜歌、解码、队列、暂停/继续与进度管理 |
@@ -24,7 +24,7 @@
 | `bringup` | 编译、启动、停止和 systemd 开机自启脚本 |
 | `docs` | 节点代码结构和编写约定 |
 
-源码目录内的模型文件放在使用它们的节点目录下。板端运行时，DeepSeek 密钥和记忆数据库分别放在 `resource/deepseek.env` 和 `resource/memory.sqlite3`，文件权限为 600。首次更新时部署脚本会从原来的 `dialogue_node/.secrets/`、`memory_node/data/` 迁移数据。
+节点专用模型文件放在对应节点目录；电脑端 Gemma 对话模型放在根目录 `models/` 并由 `.gitignore` 排除，不进入 Git 或板端运行包。板端运行时，DeepSeek 密钥和记忆数据库分别放在 `resource/deepseek.env` 和 `resource/memory.sqlite3`，文件权限为 600。首次更新时部署脚本会从原来的 `dialogue_node/.secrets/`、`memory_node/data/` 迁移数据。
 
 ### 节点职责与配置
 
@@ -56,19 +56,38 @@ bash bringup/scripts/start_all_node.sh
 
 监听有明确上限：首次唤醒窗口由 `inactivity_timeout_sec` 控制，默认最多 120 秒；机器人追问后的续听窗口由 `[speech_input].followup_timeout_sec` 控制，默认最多 15 秒，可配置 1–120 秒。窗口从开始监听时计时，背景噪声不会无限续期；超时未收到有效回答则关闭监听，等待下次唤醒。音乐中唤醒会暂停并保留播放位置，整轮对话结束（包括追问超时）且语音播完后自动恢复；用户明确暂停、停止音乐或说“闭嘴”会取消自动恢复。
 
-## DeepSeek 调用板端工具
+## 本机 Gemma 对话模型
 
-普通聊天和复杂请求由 `dialogue_node` 发送给 DeepSeek，并携带本地工具声明。模型返回 `tool_calls` 后，C++ 程序校验参数并执行对应功能，把真实结果以 `role: tool` 和 `tool_call_id` 回传，再请求模型生成最终回答。这是 [DeepSeek 官方 Tool Calls 协议](https://api-docs.deepseek.com/guides/tool_calls/)；模型不会自己登录板子或执行 shell。
+普通对话先请求开发电脑上的 Gemma 4 E4B Q4 服务；本机服务无法连接或返回无效响应时，`dialogue_node` 自动回退到 DeepSeek。DeepSeek 密钥仍放在 `resource/deepseek.env`。本地请求携带关闭思考的参数，并限制最多生成 256 个 token；DeepSeek 请求也携带关闭思考设置。
+
+模型文件位于源码目录的 `models/gemma4-E4B/gemma4-E4B_q4_0-it.gguf`，由 `.gitignore` 排除，不会提交或放入板端 OTA 包。开发电脑需准备带 server 支持的 `llama-server`，然后在工程目录启动：
+
+```bash
+bringup/scripts/start_gemma_model.sh
+```
+
+默认只打印服务状态和耗时；需要查看完整请求、工具结果与回答正文时，使用 `bringup/scripts/start_gemma_model.sh --log-content`，日志只输出到当前终端。
+
+脚本默认监听 `0.0.0.0:8081`，并打印电脑当前局域网地址。板端配置 `dialogue_node/config/biz_config.toml` 中的 `local_api_url` 应指向该电脑地址；当前配置为 `http://10.70.51.222:8081/v1/chat/completions`。若电脑的 DHCP 地址变化，需要同步更新该配置。可以用 `LLAMA_SERVER_BIN`、`GEMMA_MODEL_PATH`、`GEMMA_HOST`、`GEMMA_PORT`、`GEMMA_CONTEXT_SIZE` 和 `GEMMA_THREADS` 覆盖脚本默认值。Gemma 服务在电脑单独启动，板端的 `start_all_node.sh` 不会尝试加载这份模型。
+
+## 对话模型调用板端工具
+
+普通聊天和复杂请求由 `dialogue_node` 优先发送给电脑端 Gemma，并附带本地工具声明。模型返回 `tool_calls` 后，C++ 程序校验参数并执行对应功能，把真实结果以 `role: tool` 和 `tool_call_id` 回传，再请求模型生成最终回答。Gemma 请求连接失败、HTTP 出错或响应协议无效时，同一请求会回退到 DeepSeek。模型不会自己登录板子或执行 shell。
 
 | 工具名 | 本地执行方式 |
 | --- | --- |
 | `get_current_time` | C++ 读取板端系统时钟，返回北京时间、日期、星期；准确性依赖板端时钟 |
+| `get_weather` | 板端通过 Open-Meteo 查询城市坐标、当前天气及今天起 7 天预报，返回所在地时区、日期、温度、天气描述和降水概率；失败时返回错误，不生成天气数据 |
 | `get_volume` | 读取对话节点缓存的 `/xiaocai_robot/audio/volume_state` 最新值 |
 | `set_volume` | 发布 `/xiaocai_robot/audio/volume_command`，等待实际音量反馈；范围 0–150，超过100时语音和音乐一起增强，最多 +6 dB |
 | `control_music` | 发布 `MusicCommand`，等待 `music_node` 返回相同请求编号的状态；支持播放、暂停、继续、停止、上/下一首 |
 | `get_music_status` | 读取 `music_node` 最新播放状态、歌曲名和进度 |
 | `save_memory` / `forget_memory` / `list_memories` | 请求 `memory_node`，等待 SQLite 操作结果 |
 | `create_reminder` | 请求 `memory_node` 保存延时提醒；最长 30 天 |
+
+天气工具接受 `city` 和 `day_offset`（0 为今天，1 为明天，最大 6）。`dialogue_node/config/biz_config.toml` 的 `[dialogue].weather_default_city` 可配置默认城市，默认留空；用户未指定城市且无默认值时，机器人先询问城市。重名城市需要补充省份或国家，例如 `朝阳,辽宁`。每次地名或天气 HTTPS 请求由 `weather_timeout_seconds` 控制超时，默认 8 秒，范围 1–15 秒。接口依据 [Open-Meteo 天气 API](https://open-meteo.com/en/docs) 和 [地名查询 API](https://open-meteo.com/en/docs/geocoding-api) 接入，运行环境需能访问这两个服务。
+
+普通常识和科学原理由模型直接回答；实时天气、时间和设备状态使用工具取得。工具不可用只影响该次查询，不应扩展为普通知识能力限制。当前追问使用结构一致的 JSON 历史；最终回答播完或追问超时后，新唤醒开启新会话，已保存的长期记忆仍通过记忆工具提供。模型控制字段只在程序内解析，语音仅使用经过校验的 `reply`。工具调用阶段不同时发送最终 JSON Schema（当前 Gemma 解析器会优先选择它并屏蔽工具）；混合正文或无效结构最多做一次禁用工具的格式整理，这一步才施加结构约束。整理仍失败时，本机请求按既有逻辑回退到 DeepSeek。
 
 例如“一次请求：现在几点，顺便告诉我音量”，模型可返回：
 
@@ -85,7 +104,7 @@ HTTP 和工具等待使用独立工作线程，ROS 主线程继续处理服务�
 
 成功播放或继续音乐后，若无需追问，歌曲作为声音反馈，不再朗读模型最终确认，避免 TTS 把刚开始的音乐暂停。模型仍收到工具结果并生成最终确认；播放失败由对话节点根据错误回复。`MusicCommand` 和 `MusicState` 的 `request_id` 用于匹配工具请求，普通本地命令为 0。
 
-回归测试源码位于 `dialogue_node/tests/`：模拟 DeepSeek HTTP 协议，但使用真实 ROS 执行器和消息/服务验证工具执行、错误参数、重复调用、音乐反馈关联及取消。可在已配置的 CMake 构建目录启用 `-DXIAOCAI_BUILD_TOOL_TESTS=ON`，构建 `dialogue_tool_calls_test`；测试要在隔离 ROS_DOMAIN_ID 下运行，启动 `mock_deepseek.py`，并把测试节点的 `api_url` 设为 `http://127.0.0.1:18763`，设置虚拟 `DEEPSEEK_API_KEY`。默认编译和运行包不包含测试程序。
+回归测试源码位于 `dialogue_node/tests/`：模拟 DeepSeek HTTP 协议，但使用真实 ROS 执行器和消息/服务验证工具执行、错误参数、重复调用、音乐反馈关联及取消。可在已配置的 CMake 构建目录启用 `-DXIAOCAI_BUILD_TOOL_TESTS=ON`，构建 `dialogue_tool_calls_test`；测试要在隔离 ROS_DOMAIN_ID 下运行，启动 `mock_deepseek.py`，并把测试节点的 `local_api_url` 设为空、`api_url` 设为 `http://127.0.0.1:18763`，同时设置虚拟 `DEEPSEEK_API_KEY`。默认编译和运行包不包含测试程序。
 
 ## 打包和部署
 

@@ -9,6 +9,7 @@
 #include "defination/robot_state.hpp"
 #include "defination/volume_action.hpp"
 #include "dialogue_node/dialogue_config.hpp"
+#include "dialogue_node/weather_client.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -89,6 +90,7 @@ private:
   struct ChatJob {
     std::string text;
     std::uint64_t generation;
+    std::uint64_t session;
   };
 
   // Conversation lifecycle and user-facing responses.
@@ -115,6 +117,12 @@ private:
   nlohmann::json ExecuteTool(const std::string &name,
                              const nlohmann::json &arguments,
                              std::uint64_t generation, bool &music_started);
+  nlohmann::json
+  RequestCompletion(const std::string &api_url, const std::string &model,
+                    const nlohmann::json &messages, std::uint64_t generation,
+                    bool local_model, long connect_timeout, long timeout,
+                    std::int32_t max_tokens, const std::string &provider,
+                    bool final_reply_only = false);
   nlohmann::json Completion(const nlohmann::json &messages,
                             std::uint64_t generation);
   void HandleChat(const std::string &text, const std::string &facts,
@@ -130,7 +138,11 @@ private:
   std::atomic<bool> stopping_;
   std::atomic<bool> hushed_;
   std::atomic<std::uint64_t> generation_;
+  std::atomic<std::uint64_t> local_fallback_generation_;
+  std::atomic<std::uint64_t> session_;
+  std::uint64_t history_session_;
   std::atomic<std::uint64_t> tool_id_;
+  WeatherClient weather_client_;
   std::thread worker_;
   std::mutex tool_mutex_;
   std::condition_variable tool_cv_;
@@ -153,6 +165,7 @@ private:
   std::uint64_t next_reply_id_;
   std::map<std::uint64_t, bool> pending_replies_;
   std::string clarification_context_;
+  std::uint64_t clarification_session_;
 };
 
 } // namespace xiaocai_robot

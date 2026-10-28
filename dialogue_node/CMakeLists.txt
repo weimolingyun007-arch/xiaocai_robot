@@ -16,6 +16,7 @@ add_executable(dialogue_node
   src/dialogue_config.cpp
   src/dialogue_node.cpp
   src/dialogue_controller.cpp
+  src/weather_client.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
 ament_target_dependencies(dialogue_node ament_index_cpp rclcpp std_msgs xiaocai_msgs)
@@ -29,11 +30,16 @@ if(NOT EXISTS "${CURL_LIBRARY}")
   message(FATAL_ERROR "Could not find target libcurl at ${CURL_LIBRARY}")
 endif()
 target_link_libraries(dialogue_node "${CURL_LIBRARY}")
-option(XIAOCAI_BUILD_TOOL_TESTS "Build the isolated ROS/DeepSeek protocol regression test" OFF)
+option(XIAOCAI_BUILD_TOOL_TESTS "Build isolated dialogue/tool regression tests" OFF)
 if(XIAOCAI_BUILD_TOOL_TESTS)
-  add_executable(dialogue_tool_calls_test tests/tool_calls.cpp src/dialogue_config.cpp src/dialogue_node.cpp src/dialogue_controller.cpp "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
+  add_executable(dialogue_tool_calls_test tests/tool_calls.cpp src/dialogue_config.cpp src/dialogue_node.cpp src/dialogue_controller.cpp src/weather_client.cpp "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/node_config_base.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
   ament_target_dependencies(dialogue_tool_calls_test ament_index_cpp rclcpp std_msgs xiaocai_msgs)
   target_link_libraries(dialogue_tool_calls_test Threads::Threads "${CURL_LIBRARY}")
+  add_executable(dialogue_weather_test tests/weather_client.cpp src/weather_client.cpp)
+  target_link_libraries(dialogue_weather_test "${CURL_LIBRARY}")
+  add_executable(dialogue_conversation_test tests/conversation.cpp src/dialogue_controller.cpp src/weather_client.cpp "${CMAKE_CURRENT_SOURCE_DIR}/../common/src/log_manager.cpp")
+  ament_target_dependencies(dialogue_conversation_test std_msgs)
+  target_link_libraries(dialogue_conversation_test Threads::Threads "${CURL_LIBRARY}")
 endif()
 install(TARGETS dialogue_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})

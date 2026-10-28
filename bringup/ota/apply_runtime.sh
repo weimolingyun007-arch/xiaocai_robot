@@ -167,6 +167,7 @@ chown -R lckfb:lckfb "$payload"
 for module in "${modules[@]}"; do
   install -d -o lckfb -g lckfb -m 0755 "/userdata/log/$module"
 done
+install -d -o lckfb -g lckfb -m 0755 /userdata/config/intent_node
 mv "$source_workspace" "$backup"
 replaced=1
 mv "$payload" "$workspace"

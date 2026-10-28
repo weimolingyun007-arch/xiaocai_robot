@@ -18,9 +18,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             assert body["thinking"] == {"type": "disabled"}
-            assert len(body["tools"]) == 9
+            repair = body.get("tool_choice") == "none"
+            if repair:
+                assert "tools" not in body
+                assert body["response_format"]["type"] in {"json_schema", "json_object"}
+            else:
+                assert "response_format" not in body
+                assert {t["function"]["name"] for t in body["tools"]} == {
+                    "get_current_time", "get_weather", "get_volume", "set_volume",
+                    "control_music", "get_music_status", "save_memory",
+                    "forget_memory", "list_memories", "create_reminder"}
             messages = body["messages"]
-            user_index = max(i for i, m in enumerate(messages) if m["role"] == "user")
+            request_messages = messages[:-1] if repair else messages
+            user_index = max(i for i, m in enumerate(request_messages) if m["role"] == "user")
             case = messages[user_index]["content"]
             results = [json.loads(m["content"]) for m in messages[user_index + 1:] if m["role"] == "tool"]
             message = {"role": "assistant", "content": None}
@@ -46,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
                     bad = Call("get_volume", {}, 2)
                     bad["function"]["arguments"] = "{broken"
                     message["tool_calls"] = [Call("run_shell", {"command": "date"}, 0),
-                                             Call("set_volume", {"action": "set", "percent": 101}, 1), bad]
+                                             Call("set_volume", {"action": "set", "percent": 151}, 1), bad]
                 else:
                     assert len(results) == 3 and all(not r["ok"] for r in results)
                     message["content"] = "invalid_tools_ok"
@@ -65,8 +75,47 @@ class Handler(BaseHTTPRequestHandler):
             elif case == "hush_cancel":
                 time.sleep(2)
                 message["tool_calls"] = [Call("set_volume", {"action": "down"}, 0)]
+            elif case == "weather_location":
+                if not results:
+                    message["tool_calls"] = [Call("get_weather", {}, 0)]
+                else:
+                    assert results == [{"ok": False, "error_code": "location_required",
+                                        "error": "请先询问用户要查询哪个城市。"}]
+                    message["content"] = json.dumps(
+                        {"reply": "请问你想查询哪个城市？", "expect_reply": True}, ensure_ascii=False)
+            elif case == "深圳":
+                previous = [m for m in messages[:user_index] if m["role"] == "assistant"]
+                assert len(previous) == 1
+                assert json.loads(previous[0]["content"]) == {
+                    "reply": "请问你想查询哪个城市？", "expect_reply": True}
+                message["content"] = "city_context_ok"
+            elif case in {"new_session", "after_timeout", "after_invalid"}:
+                assert [m["role"] for m in messages] == ["system", "user"]
+                message["content"] = case + "_ok"
+            elif case == "timeout_question":
+                message["content"] = json.dumps(
+                    {"reply": "还有哪个城市？", "expect_reply": True}, ensure_ascii=False)
+            elif case == "invalid_response":
+                if self.path == "/local":
+                    message["content"] = '不能回答。{"reply":"错误历史","expect_reply":false}'
+                else:
+                    assert self.path == "/cloud"
+                    message["content"] = "format_fallback_ok"
+            elif case == "repair_response":
+                message["content"] = ("format_repair_ok" if repair else
+                                      '普通正文。{"reply":"格式整理","expect_reply":false}')
             else:
                 message["content"] = "recovered_ok"
+            malformed = ((case == "invalid_response" and self.path == "/local") or
+                         (case == "repair_response" and not repair))
+            if message["content"] is not None and not malformed:
+                try:
+                    structured = json.loads(message["content"])
+                except (ValueError, TypeError):
+                    structured = None
+                if not isinstance(structured, dict):
+                    message["content"] = json.dumps(
+                        {"reply": message["content"], "expect_reply": False}, ensure_ascii=False)
             response = json.dumps({"choices": [{"message": message}]}, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

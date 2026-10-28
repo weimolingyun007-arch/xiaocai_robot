@@ -109,6 +109,16 @@ void DialogueNode::InitSubscribers() {
 
 void DialogueNode::InitController() {
   auto settings = dialogue_config_.Settings();
+  settings.local_api_url =
+      declare_parameter<std::string>("local_api_url", settings.local_api_url);
+  settings.local_model =
+      declare_parameter<std::string>("local_model", settings.local_model);
+  settings.local_connect_timeout_seconds = declare_parameter<std::int32_t>(
+      "local_connect_timeout_seconds", settings.local_connect_timeout_seconds);
+  settings.local_timeout_seconds = declare_parameter<std::int32_t>(
+      "local_timeout_seconds", settings.local_timeout_seconds);
+  settings.local_max_tokens = declare_parameter<std::int32_t>(
+      "local_max_tokens", settings.local_max_tokens);
   settings.api_url =
       declare_parameter<std::string>("api_url", settings.api_url);
   settings.model = declare_parameter<std::string>("model", settings.model);

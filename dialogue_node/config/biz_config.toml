@@ -8,5 +8,15 @@ max_files_per_day = 3
 retention_days = 7
 
 [dialogue]
+# Set this to the development computer's current LAN address.
+local_api_url = "http://10.70.51.222:8081/v1/chat/completions"
+local_model = "gemma4-e4b"
+local_connect_timeout_seconds = 2
+local_timeout_seconds = 45
+local_max_tokens = 256
+# Empty means the model must ask for a city. No location is inferred from IP.
+weather_default_city = ""
+# Each geocoding/forecast HTTPS request times out after 1–15 seconds.
+weather_timeout_seconds = 8
 api_url = "https://api.deepseek.com/chat/completions"
 model = "deepseek-flash"
